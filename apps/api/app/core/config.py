@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.5-flash"
     llm_api_key: str = ""
+    tavily_api_key: str = ""
     llm_max_output_tokens: int = 2048
     upstash_redis_rest_url: str = ""
     upstash_redis_rest_token: str = ""
