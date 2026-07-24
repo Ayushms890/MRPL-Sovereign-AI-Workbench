@@ -77,7 +77,8 @@ class GeminiProvider(LLMProvider):
         return LLMResponse(content=text or "The model returned an empty response.")
 
     def _post_generate_content(self, url: str, payload: dict) -> httpx.Response:
-        for attempt in range(2):
+        max_attempts = 4
+        for attempt in range(max_attempts):
             try:
                 response = httpx.post(
                     url,
@@ -89,18 +90,24 @@ class GeminiProvider(LLMProvider):
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
                 reason = exc.response.reason_phrase
-                if status_code in RETRYABLE_STATUS_CODES and attempt == 0:
-                    time.sleep(1)
+                if status_code in RETRYABLE_STATUS_CODES and attempt < max_attempts - 1:
+                    sleep_time = 2 ** attempt
+                    logger.warning("Gemini returned %d %s, retrying attempt %d/%d in %ds...", status_code, reason, attempt + 1, max_attempts, sleep_time)
+                    time.sleep(sleep_time)
                     continue
                 raise LLMGenerationError(
                     f"Gemini request failed with HTTP {status_code} {reason} (model={self.model})."
                 ) from exc
             except httpx.HTTPError as exc:
+                if attempt < max_attempts - 1:
+                    sleep_time = 2 ** attempt
+                    time.sleep(sleep_time)
+                    continue
                 raise LLMGenerationError(
                     f"Gemini request failed with {exc.__class__.__name__} (model={self.model})."
                 ) from exc
 
-        raise LLMGenerationError(f"Gemini request failed after retry (model={self.model}).")
+        raise LLMGenerationError(f"Gemini request failed after {max_attempts} attempts (model={self.model}).")
 
     @staticmethod
     def _contents(messages: list[LLMMessage]) -> list[dict]:
