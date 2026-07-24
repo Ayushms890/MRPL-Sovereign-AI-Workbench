@@ -6,6 +6,7 @@ import { useChat } from "../../chat-context";
 import { User, Bot, Wrench, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ExecutionTrace } from "../../components/execution-trace";
 
 export default function ChatSessionPage() {
   const params = useParams();
@@ -15,6 +16,7 @@ export default function ChatSessionPage() {
     token,
     messages,
     isSending,
+    currentExecutionSteps,
     setActiveConversationId,
     loadMessages,
   } = useChat();
@@ -37,6 +39,10 @@ export default function ChatSessionPage() {
             </div>
             
             <div className="message-bubble-wrapper">
+              {!isUser && message.execution_steps && message.execution_steps.length > 0 && (
+                <ExecutionTrace steps={message.execution_steps} isPending={false} />
+              )}
+
               <article className="message-bubble">
                 <span>{isUser ? "You" : "Archimedes"}</span>
                 <div className="message-markdown">
@@ -86,15 +92,19 @@ export default function ChatSessionPage() {
             <Bot size={16} />
           </div>
           <div className="message-bubble-wrapper">
-            <article className="message-bubble pending-bubble">
-              <span>Archimedes</span>
-              <div className="typing-indicator">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-              <p className="pending-text">Planner is executing agent workflow nodes...</p>
-            </article>
+            {currentExecutionSteps.length > 0 ? (
+              <ExecutionTrace steps={currentExecutionSteps} isPending={true} />
+            ) : (
+              <article className="message-bubble pending-bubble">
+                <span>Archimedes</span>
+                <div className="typing-indicator">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <p className="pending-text">Planner is executing agent workflow nodes...</p>
+              </article>
+            )}
           </div>
         </div>
       )}

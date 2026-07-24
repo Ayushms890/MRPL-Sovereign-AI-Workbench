@@ -112,4 +112,5 @@ class AgentJobStatusResponse(BaseModel):
     job_id: str
     status: str
     assistant_message: MessageResponse | None = None
+    execution_steps: list[dict] | None = None
     error: str | None = None

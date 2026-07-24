@@ -18,3 +18,4 @@ class Job:
     error: str | None
     created_at: datetime
     updated_at: datetime
+    execution_steps: list[dict] | None = None

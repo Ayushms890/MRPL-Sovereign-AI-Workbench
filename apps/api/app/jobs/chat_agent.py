@@ -9,6 +9,7 @@ from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
 from app.core.config import settings
 from app.db import SessionLocal, get_engine
+from app.jobs.queue import build_job_queue
 from app.infrastructure.models import UserModel
 from app.providers.base import LLMGenerationError, LLMMessage
 from app.providers.caching import CachingLLMProvider
@@ -82,13 +83,46 @@ def run_chat_agent_job(payload: dict) -> dict:
             conversation_id=conversation_id,
         )
 
+        job_id = payload.get("job_id")
+        queue = build_job_queue()
+        if queue and job_id:
+            queue.add_execution_step(job_id, "planner", "Planner analyzing prompt...", "running")
+
         try:
             result = agent.run(user_input=content, history=history)
+            if queue and job_id:
+                if result.agent_name:
+                    queue.add_execution_step(
+                        job_id,
+                        "specialist",
+                        f"Routed to {result.agent_name.capitalize()} Agent",
+                        "completed",
+                        metadata={"agent_name": result.agent_name},
+                    )
+                if result.tool_name:
+                    queue.add_execution_step(
+                        job_id,
+                        "tool",
+                        f"Executed tool `{result.tool_name}`",
+                        "completed",
+                        metadata={
+                            "tool_name": result.tool_name,
+                            "tool_arguments": result.tool_arguments,
+                            "tool_output": result.tool_output[:200] if result.tool_output else None,
+                        },
+                    )
+                queue.add_execution_step(job_id, "finalize", "Finalized response", "completed")
         except LLMGenerationError as exc:
+            if queue and job_id:
+                queue.add_execution_step(job_id, "error", f"LLM provider failed: {exc}", "failed")
             raise ValueError(f"LLM provider failed: {exc}") from exc
         except EmbeddingError as exc:
+            if queue and job_id:
+                queue.add_execution_step(job_id, "error", f"Embedding provider failed: {exc}", "failed")
             raise ValueError(f"Embedding provider failed: {exc}") from exc
         except Exception as exc:
+            if queue and job_id:
+                queue.add_execution_step(job_id, "error", "An unexpected server error occurred.", "failed")
             logger.exception("Unexpected error during agent execution")
             raise ValueError("An unexpected server error occurred.") from exc
 

@@ -23,12 +23,21 @@ export type Conversation = {
   updated_at: string;
 };
 
+export type ExecutionStep = {
+  step: string;
+  label: string;
+  status: string;
+  timestamp: string;
+  metadata?: Record<string, any>;
+};
+
 export type Message = {
   id: string;
   role: string;
   content: string;
   tool_name: string | null;
   created_at: string;
+  execution_steps?: ExecutionStep[];
 };
 
 export type SuggestionCard = {
@@ -73,6 +82,7 @@ type ConversationContextType = {
   setActiveConversationId: (id: string | null) => void;
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  currentExecutionSteps: ExecutionStep[];
   editingConversationId: string | null;
   setEditingConversationId: (id: string | null) => void;
   editingTitle: string;
@@ -101,6 +111,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [currentExecutionSteps, setCurrentExecutionSteps] = useState<ExecutionStep[]>([]);
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
@@ -294,8 +305,13 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
             job_id: string;
             status: string;
             assistant_message: Message | null;
+            execution_steps: ExecutionStep[] | null;
             error: string | null;
           }>(`/conversations/${targetId}/messages/jobs/${jobId}`);
+
+          if (job.execution_steps && job.execution_steps.length > 0) {
+            setCurrentExecutionSteps(job.execution_steps);
+          }
 
           const succeeded = job.status === "succeeded" && job.assistant_message !== null;
           const failed = job.status === "failed";
@@ -317,10 +333,18 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
             if (addedUserMessageId) {
               setMessages((current) => current.filter((m) => m.id !== addedUserMessageId));
             }
+            setCurrentExecutionSteps([]);
             setIsSending(false);
           },
           onSucceeded: (assistantMessage) => {
-            setMessages((current) => [...current, assistantMessage]);
+            setMessages((current) => [
+              ...current,
+              {
+                ...assistantMessage,
+                execution_steps: currentExecutionSteps,
+              },
+            ]);
+            setCurrentExecutionSteps([]);
             setStatus(
               assistantMessage.tool_name ? `Used ${assistantMessage.tool_name}` : "Ready"
             );
@@ -334,6 +358,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
             if (addedUserMessageId) {
               setMessages((current) => current.filter((m) => m.id !== addedUserMessageId));
             }
+            setCurrentExecutionSteps([]);
             setIsSending(false);
           },
         }
@@ -345,6 +370,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
       if (addedUserMessageId) {
         setMessages((current) => current.filter((m) => m.id !== addedUserMessageId));
       }
+      setCurrentExecutionSteps([]);
       setIsSending(false);
     }
   }
@@ -358,6 +384,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         setActiveConversationId,
         messages,
         setMessages,
+        currentExecutionSteps,
         editingConversationId,
         setEditingConversationId,
         editingTitle,

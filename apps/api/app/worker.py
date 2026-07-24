@@ -37,7 +37,8 @@ def main() -> None:
             job_logger.info("Running job %s (%s)", job.id, job.job_type)
             queue.update_status(job.id, JobStatus.RUNNING)
             try:
-                result = handler(job.payload)
+                payload_with_id = {**job.payload, "job_id": job.id}
+                result = handler(payload_with_id)
                 queue.update_status(job.id, JobStatus.SUCCEEDED, result=result)
                 job_logger.info("Job %s succeeded", job.id)
             except Exception as exc:

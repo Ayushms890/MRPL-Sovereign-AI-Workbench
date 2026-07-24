@@ -123,7 +123,11 @@ def get_message_job(
             created_at=job.result["created_at"],
         )
     return AgentJobStatusResponse(
-        job_id=job.id, status=job.status.value, assistant_message=assistant_message, error=job.error
+        job_id=job.id,
+        status=job.status.value,
+        assistant_message=assistant_message,
+        execution_steps=job.execution_steps,
+        error=job.error,
     )
 
 

@@ -76,11 +76,40 @@ class JobQueue:
         except Exception as exc:
             raise JobQueueError(f"Failed to update job {job_id}: {exc}") from exc
 
+    def add_execution_step(
+        self,
+        job_id: str,
+        step: str,
+        label: str,
+        status: str = "completed",
+        metadata: dict | None = None,
+    ) -> None:
+        job = self.get(job_id)
+        if job is None:
+            return
+        if job.execution_steps is None:
+            job.execution_steps = []
+        
+        step_data = {
+            "step": step,
+            "label": label,
+            "status": status,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "metadata": metadata or {},
+        }
+        job.execution_steps.append(step_data)
+        job.updated_at = datetime.now(timezone.utc)
+        try:
+            self._save(job)
+        except Exception as exc:
+            logger.warning(f"Failed to record execution step for job {job_id}: {exc}")
+
     def _save(self, job: Job) -> None:
         payload = asdict(job)
         payload["status"] = job.status.value
         payload["created_at"] = job.created_at.isoformat()
         payload["updated_at"] = job.updated_at.isoformat()
+        payload["execution_steps"] = job.execution_steps or []
         self.client.set(f"job:{job.id}", json.dumps(payload), ex=JOB_TTL_SECONDS)
 
     @staticmethod
@@ -95,6 +124,7 @@ class JobQueue:
             error=payload.get("error"),
             created_at=datetime.fromisoformat(payload["created_at"]),
             updated_at=datetime.fromisoformat(payload["updated_at"]),
+            execution_steps=payload.get("execution_steps"),
         )
 
 
