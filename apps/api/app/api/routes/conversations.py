@@ -73,6 +73,7 @@ def send_message(
 
     queue = build_job_queue()
     if queue is None:
+        repo.delete_message(user_message.id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Chat requires Redis to be configured (UPSTASH_REDIS_REST_URL/TOKEN).",
@@ -88,6 +89,7 @@ def send_message(
             },
         )
     except JobQueueError as exc:
+        repo.delete_message(user_message.id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return AgentJobResponse(job_id=job.id, status=job.status.value, user_message=_message_response(user_message))

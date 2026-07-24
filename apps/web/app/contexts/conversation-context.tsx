@@ -355,8 +355,8 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
             const message = error ?? "Planner failed";
             setStatus(message);
             toast.error(`Error: ${message}`);
-            if (addedUserMessageId) {
-              setMessages((current) => current.filter((m) => m.id !== addedUserMessageId));
+            if (targetId) {
+              void loadMessages(getToken(), targetId);
             }
             setCurrentExecutionSteps([]);
             setIsSending(false);

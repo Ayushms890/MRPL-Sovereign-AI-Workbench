@@ -46,6 +46,10 @@ def run_chat_agent_job(payload: dict) -> dict:
         try:
             provider_name, api_key = resolve_active_provider(session, user_id, preferred_provider)
         except ValueError as exc:
+            try:
+                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: LLM provider failed: {exc}")
+            except Exception:
+                pass
             raise ValueError(f"LLM provider failed: {exc}") from exc
 
         llm_provider = build_provider(api_key=api_key, provider_name=provider_name)
@@ -55,6 +59,10 @@ def run_chat_agent_job(payload: dict) -> dict:
         try:
             gemini_key = resolve_gemini_api_key(session, user_id, preferred_provider)
         except ValueError as exc:
+            try:
+                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: {exc}")
+            except Exception:
+                pass
             raise ValueError(str(exc)) from exc
 
         embedding_provider = GeminiEmbeddingProvider(
@@ -115,15 +123,27 @@ def run_chat_agent_job(payload: dict) -> dict:
         except LLMGenerationError as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", f"LLM provider failed: {exc}", "failed")
+            try:
+                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: LLM provider failed: {exc}")
+            except Exception:
+                pass
             raise ValueError(f"LLM provider failed: {exc}") from exc
         except EmbeddingError as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", f"Embedding provider failed: {exc}", "failed")
+            try:
+                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: Embedding provider failed: {exc}")
+            except Exception:
+                pass
             raise ValueError(f"Embedding provider failed: {exc}") from exc
         except Exception as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", "An unexpected server error occurred.", "failed")
             logger.exception("Unexpected error during agent execution")
+            try:
+                repo.add_message(conversation_id=conversation_id, role="assistant", content="Request failed: An unexpected server error occurred.")
+            except Exception:
+                pass
             raise ValueError("An unexpected server error occurred.") from exc
 
         assistant_message = repo.add_message(

@@ -89,6 +89,14 @@ class ConversationRepository:
         self.session.refresh(message)
         return self._message_to_entity(message)
 
+    def delete_message(self, message_id: str) -> bool:
+        message = self.session.get(MessageModel, message_id)
+        if message is None:
+            return False
+        self.session.delete(message)
+        self.session.commit()
+        return True
+
     @staticmethod
     def _conversation_to_entity(conversation: ConversationModel) -> Conversation:
         return Conversation(
