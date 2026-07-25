@@ -1,9 +1,8 @@
-version: '3.8'
-
 services:
   # FastAPI Web Server
   api:
     build: .
+    image: ai_os_app:latest
     container_name: ai_os_api
     restart: always
     env_file:
@@ -15,9 +14,11 @@ services:
 
   # Background Worker for document ingestion & chat jobs
   worker:
-    build: .
+    image: ai_os_app:latest
     container_name: ai_os_worker
     restart: always
     env_file:
       - .env
     command: python -m app.worker
+    depends_on:
+      - api

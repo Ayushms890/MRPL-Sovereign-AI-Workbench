@@ -2,10 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install lightweight system dependencies (avoid build-essential to keep image small)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -13,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml .
 COPY alembic.ini .
 
-# Install dependencies
+# Install dependencies without caching extra wheels
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
 
