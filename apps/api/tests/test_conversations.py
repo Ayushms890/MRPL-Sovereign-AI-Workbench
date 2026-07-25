@@ -459,4 +459,47 @@ def test_send_message_returns_500_on_generic_runtime_error(
     assert "An unexpected server error occurred." in str(excinfo.value)
 
 
+def test_send_message_concurrency_lock_prevents_duplicate_sends(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.jobs.queue import JobQueue
+    from app.cache.redis_client import RedisCache
+
+    fake_redis = FakeUpstashRedisClient()
+
+    fake_queue = JobQueue("http://fake", "fake")
+    fake_queue.client = fake_redis
+    monkeypatch.setattr("app.api.routes.conversations.build_job_queue", lambda: fake_queue)
+
+    fake_cache = RedisCache("http://fake", "fake")
+    fake_cache.client = fake_redis
+    
+    from app.api.deps_providers import get_redis_cache
+    app.dependency_overrides[get_redis_cache] = lambda: fake_cache
+    try:
+        create = client.post("/conversations", headers=auth_headers, json={"title": "Concurrency session"})
+        conversation_id = create.json()["id"]
+
+        # Send first message - should succeed and be enqueued
+        send1 = client.post(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers,
+            json={"content": "First message"},
+        )
+        assert send1.status_code == 202
+
+        # Send second message immediately - should fail with 409 Conflict because first job is still active (queued)
+        send2 = client.post(
+            f"/conversations/{conversation_id}/messages",
+            headers=auth_headers,
+            json={"content": "Second message"},
+        )
+        assert send2.status_code == 409
+        assert "Archimedes is currently answering" in send2.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_redis_cache, None)
+
+
 

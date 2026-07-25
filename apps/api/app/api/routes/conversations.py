@@ -71,19 +71,35 @@ def send_message(
     payload: MessageCreateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
 ) -> AgentJobResponse:
     _require_conversation(repo, conversation_id, current_user.id)
 
-    content = payload.content.strip()
-    user_message = repo.add_message(conversation_id=conversation_id, role="user", content=content)
-
     queue = build_job_queue()
     if queue is None:
-        repo.delete_message(user_message.id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Chat requires Redis to be configured (UPSTASH_REDIS_REST_URL/TOKEN).",
         )
+
+    # Concurrency Lock Guard: check if an active job is already running for this conversation
+    if cache:
+        lock_key = f"active_chat_job:{conversation_id}"
+        existing_job_id = cache.get(lock_key)
+        if existing_job_id:
+            try:
+                job = queue.get(existing_job_id)
+                if job and job.status.value in ["queued", "running"]:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Archimedes is currently answering a query in this conversation. Please wait until it completes.",
+                    )
+            except JobQueueError as exc:
+                logger.error("Error checking existing job status: %s", exc)
+
+    content = payload.content.strip()
+    user_message = repo.add_message(conversation_id=conversation_id, role="user", content=content)
+
     try:
         job = queue.enqueue(
             "chat_agent_run",
@@ -94,6 +110,9 @@ def send_message(
                 "content": content,
             },
         )
+        if cache:
+            # Set the concurrency lock for 5 minutes (300 seconds)
+            cache.set(lock_key, job.id, ttl_seconds=300)
     except JobQueueError as exc:
         repo.delete_message(user_message.id)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
