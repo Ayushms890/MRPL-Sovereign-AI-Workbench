@@ -19,7 +19,9 @@ export default function AuthPage() {
 
   useEffect(() => {
     if (isLoaded && isSignedIn) {
-      router.replace("/chat");
+      const params = new URLSearchParams(window.location.search);
+      const dest = params.get("redirect") || "/chat";
+      router.replace(dest);
     }
   }, [isLoaded, isSignedIn, router]);
 
@@ -45,7 +47,9 @@ export default function AuthPage() {
       }
 
       login(data.access_token, data.user);
-      router.push("/chat");
+      const params = new URLSearchParams(window.location.search);
+      const dest = params.get("redirect") || "/chat";
+      router.push(dest);
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred");
     } finally {

@@ -196,6 +196,7 @@ export default function ChatSessionPage() {
         onClose={() => setIsExportOpen(false)}
         title={currentConv?.title || "Archimedes Chat"}
         messages={messages}
+        conversationId={chatId}
       />
     </div>
   );

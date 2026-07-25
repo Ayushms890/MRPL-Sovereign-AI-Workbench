@@ -623,6 +623,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           onClose={() => setIsExportOpen(false)}
           title={conversations.find((c) => c.id === activeConversationId)?.title || "Archimedes Chat"}
           messages={messages || []}
+          conversationId={activeConversationId}
         />
       )}
       {/* API Key Warning Modal */}

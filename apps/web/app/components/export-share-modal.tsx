@@ -4,6 +4,8 @@ import React, { useState } from "react";
 import { Download, Share2, Copy, Check, X, FileText, Code } from "lucide-react";
 import toast from "react-hot-toast";
 
+import { useAuth } from "../contexts/auth-context";
+
 interface Message {
   id: string;
   role: string;
@@ -17,12 +19,57 @@ interface ExportShareModalProps {
   onClose: () => void;
   title: string;
   messages: Message[];
+  conversationId?: string | null;
 }
 
-export function ExportShareModal({ isOpen, onClose, title, messages }: ExportShareModalProps) {
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+export function ExportShareModal({ isOpen, onClose, title, messages, conversationId }: ExportShareModalProps) {
+  const { getToken } = useAuth();
   const [copiedShare, setCopiedShare] = useState(false);
+  const [sharingUrl, setSharingUrl] = useState<string | null>(null);
+  const [isGeneratingShare, setIsGeneratingShare] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   if (!isOpen) return null;
+
+  const generateShareLink = async () => {
+    if (!conversationId) {
+      toast.error("No active conversation to share");
+      return;
+    }
+    setIsGeneratingShare(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_URL}/conversations/${conversationId}/share`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        throw new Error("Failed to generate share snapshot");
+      }
+      const data = await res.json();
+      const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+      setSharingUrl(`${origin}/share/${data.share_id}`);
+      toast.success("Shareable link generated!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to share conversation");
+    } finally {
+      setIsGeneratingShare(false);
+    }
+  };
+
+  const copyShareLink = () => {
+    if (sharingUrl) {
+      navigator.clipboard.writeText(sharingUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+      toast.success("Link copied to clipboard!");
+    }
+  };
 
   const exportMarkdown = () => {
     const md = messages
@@ -171,6 +218,70 @@ export function ExportShareModal({ isOpen, onClose, title, messages }: ExportSha
               <div style={{ fontSize: "11px", color: "#64748b" }}>Copy formatted summary to clipboard</div>
             </div>
           </button>
+
+          <button
+            type="button"
+            onClick={generateShareLink}
+            disabled={isGeneratingShare}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "12px 16px",
+              background: "#f8fafc",
+              border: "1px solid #cbd5e1",
+              borderRadius: "8px",
+              cursor: isGeneratingShare ? "not-allowed" : "pointer",
+              textAlign: "left",
+              color: "#334155",
+              opacity: isGeneratingShare ? 0.7 : 1,
+            }}
+          >
+            <Share2 size={20} style={{ color: "#818cf8" }} />
+            <div>
+              <div style={{ fontWeight: 600, fontSize: "13px" }}>{isGeneratingShare ? "Generating Link..." : "Generate Shareable Link"}</div>
+              <div style={{ fontSize: "11px", color: "#64748b" }}>Create a read-only public snapshot URL</div>
+            </div>
+          </button>
+
+          {sharingUrl && (
+            <div style={{ marginTop: 8, padding: 12, background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: 8 }}>
+              <div style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: 6 }}>Shareable link:</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={sharingUrl}
+                  style={{
+                    flex: 1,
+                    padding: "6px 10px",
+                    fontSize: "12px",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 6,
+                    background: "#ffffff",
+                    outline: "none",
+                  }}
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  type="button"
+                  onClick={copyShareLink}
+                  style={{
+                    padding: "6px 12px",
+                    background: "var(--accent, #6366f1)",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: 6,
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {copiedLink ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
