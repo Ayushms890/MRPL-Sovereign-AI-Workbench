@@ -10,7 +10,11 @@ from app.api.dependencies import get_current_user
 from app.auth.api_key_repository import UserApiKeyRepository
 from app.auth.encryption import EncryptionService
 from app.auth.provider_resolution import resolve_active_provider, resolve_gemini_api_key
-from app.cache.redis_client import build_redis_cache
+from app.cache.redis_client import RedisCache, build_redis_cache
+
+
+def get_redis_cache() -> RedisCache | None:
+    return build_redis_cache()
 from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
 from app.core.config import settings
@@ -84,6 +88,10 @@ def get_conversation_repository(
     if cache is None:
         return repository
     return CachingConversationRepository(inner=repository, cache=cache)
+
+
+def get_redis_cache() -> RedisCache | None:
+    return build_redis_cache()
 
 
 def get_tool_registry() -> ToolRegistry:

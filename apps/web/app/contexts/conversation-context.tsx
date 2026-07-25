@@ -13,7 +13,6 @@ import { createApiClient } from "../lib/api-client";
 import { useAuth } from "./auth-context";
 import { useUi } from "./ui-context";
 import { useApiKeys } from "./api-keys-context";
-import { pollJob } from "../hooks/use-job-poller";
 import toast from "react-hot-toast";
 
 export type Conversation = {
@@ -88,6 +87,12 @@ type ConversationContextType = {
   editingTitle: string;
   setEditingTitle: (title: string) => void;
   conversationGroups: [string, Conversation[]][];
+  streamingThought: string;
+  streamingDelta: string;
+  streamingStatus: string;
+  streamingTool: string;
+  streamingAgent: string;
+  isStreamingActive: boolean;
   loadConversations: (authToken?: string) => Promise<void>;
   loadMessages: (authToken: string | undefined, conversationId: string) => Promise<void>;
   createConversation: () => Promise<Conversation | null>;
@@ -115,6 +120,14 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
+  // Live SSE Streaming States
+  const [streamingThought, setStreamingThought] = useState("");
+  const [streamingDelta, setStreamingDelta] = useState("");
+  const [streamingStatus, setStreamingStatus] = useState("");
+  const [streamingTool, setStreamingTool] = useState("");
+  const [streamingAgent, setStreamingAgent] = useState("");
+  const [isStreamingActive, setIsStreamingActive] = useState(false);
+
   useEffect(() => {
     if (isAuthenticated) {
       void loadConversations();
@@ -129,15 +142,16 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
     const now = new Date();
     const oneDay = 24 * 60 * 60 * 1000;
 
-    conversations.forEach((c) => {
-      const date = new Date(c.created_at);
-      const diff = now.getTime() - date.getTime();
-      if (diff < oneDay) {
-        today.push(c);
-      } else if (diff < 2 * oneDay) {
-        yesterday.push(c);
+    conversations.forEach((conv) => {
+      const convDate = new Date(conv.created_at);
+      const diffDays = Math.floor((now.getTime() - convDate.getTime()) / oneDay);
+
+      if (diffDays === 0) {
+        today.push(conv);
+      } else if (diffDays === 1) {
+        yesterday.push(conv);
       } else {
-        older.push(c);
+        older.push(conv);
       }
     });
 
@@ -145,139 +159,129 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
     if (today.length > 0) groups.push(["Today", today]);
     if (yesterday.length > 0) groups.push(["Yesterday", yesterday]);
     if (older.length > 0) groups.push(["Older", older]);
+
     return groups;
   }, [conversations]);
 
-  async function loadConversations(authToken?: string) {
-    setStatus("Loading conversations");
+  const api = useMemo(() => createApiClient(getToken), [getToken]);
+
+  const loadConversations = async (authToken?: string) => {
     try {
-      const bearerToken = authToken ?? (await getToken());
-      if (!bearerToken) return;
-      const response = await fetch(`${API_URL}/conversations`, {
-        headers: { Authorization: `Bearer ${bearerToken}` },
-      });
-      const data = (await response.json()) as Conversation[];
-      if (!response.ok) {
-        throw new Error("Could not load conversations");
+      let data: Conversation[];
+      if (authToken) {
+        const response = await fetch(`${API_URL}/conversations`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!response.ok) throw new Error("Failed to load conversations");
+        data = await response.json();
+      } else {
+        data = await api<Conversation[]>("/conversations");
       }
       setConversations(data);
-      setStatus("Ready");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not load conversations");
+      console.error("Error loading conversations:", error);
     }
-  }
+  };
 
-  async function loadMessages(authToken: string | undefined, conversationId: string) {
+  const loadMessages = async (authToken: string | undefined, conversationId: string) => {
     try {
-      const bearerToken = authToken ?? (await getToken());
-      if (!bearerToken) return;
-      const response = await fetch(
-        `${API_URL}/conversations/${conversationId}/messages`,
-        { headers: { Authorization: `Bearer ${bearerToken}` } }
-      );
-      const data = (await response.json()) as Message[];
-      if (!response.ok) {
-        throw new Error("Could not load messages");
-      }
-      setMessages((current) => {
-        const dataIds = new Set(data.map((m) => m.id));
-        const pendingUserMessages = current.filter(
-          (m) => !dataIds.has(m.id) && m.role === "user"
+      let data: Message[];
+      if (authToken) {
+        const response = await fetch(
+          `${API_URL}/conversations/${conversationId}/messages`,
+          {
+            headers: { Authorization: `Bearer ${authToken}` },
+          }
         );
-        return [...data, ...pendingUserMessages];
-      });
+        if (!response.ok) throw new Error("Failed to load messages");
+        data = await response.json();
+      } else {
+        data = await api<Message[]>(`/conversations/${conversationId}/messages`);
+      }
+      setMessages(data);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not load messages");
+      console.error("Error loading messages:", error);
     }
-  }
+  };
 
-  async function createConversation(): Promise<Conversation | null> {
-    const api = createApiClient(getToken);
-    setStatus("Creating conversation");
+  const createConversation = async (): Promise<Conversation | null> => {
     try {
-      const conversation = await api<Conversation>("/conversations", {
+      const newConv = await api<Conversation>("/conversations", {
         method: "POST",
-        body: JSON.stringify({ title: `New session ${conversations.length + 1}` }),
+        body: JSON.stringify({ title: "New Session" }),
       });
-      setConversations((current) => [conversation, ...current]);
+      setConversations((prev) => [newConv, ...prev]);
+      setActiveConversationId(newConv.id);
       setMessages([]);
-      setStatus("Ready");
-      router.push(`/chat/${conversation.id}`);
-      return conversation;
+      router.push(`/chat/${newConv.id}`);
+      return newConv;
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not create conversation");
+      console.error("Error creating conversation:", error);
+      toast.error("Failed to create new conversation");
       return null;
     }
-  }
+  };
 
-  async function deleteConversation(conversationId: string) {
-    const api = createApiClient(getToken);
-    setStatus("Deleting conversation");
+  const deleteConversation = async (conversationId: string) => {
     try {
       await api(`/conversations/${conversationId}`, { method: "DELETE" });
-      const remaining = conversations.filter((c) => c.id !== conversationId);
-      setConversations(remaining);
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
       if (activeConversationId === conversationId) {
+        setActiveConversationId(null);
         setMessages([]);
         router.push("/chat");
       }
-      setStatus("Ready");
+      toast.success("Conversation deleted");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not delete conversation");
+      console.error("Error deleting conversation:", error);
+      toast.error("Failed to delete conversation");
     }
-  }
+  };
 
-  async function renameConversation(conversationId: string, newTitle: string) {
-    if (!newTitle.trim()) return;
-    const api = createApiClient(getToken);
+  const renameConversation = async (conversationId: string, newTitle: string) => {
     try {
-      await api(`/conversations/${conversationId}`, {
+      const updated = await api<Conversation>(`/conversations/${conversationId}`, {
         method: "PUT",
-        body: JSON.stringify({ title: newTitle.trim() }),
+        body: JSON.stringify({ title: newTitle }),
       });
-      setConversations((current) =>
-        current.map((c) =>
-          c.id === conversationId ? { ...c, title: newTitle.trim() } : c
-        )
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? updated : c))
       );
-      setEditingConversationId(null);
+      toast.success("Renamed conversation");
     } catch (error) {
-      // keep silent on auto-rename error
+      console.error("Error renaming conversation:", error);
+      toast.error("Failed to rename conversation");
     }
-  }
+  };
 
-  async function sendMessage(
+  const sendMessage = async (
     event?: FormEvent<HTMLFormElement>,
     textOverride?: string,
     conversationIdOverride?: string
-  ) {
+  ) => {
     if (event) event.preventDefault();
+
     if (configuredProviders.length === 0) {
       setIsApiKeyWarningOpen(true);
       return;
     }
-    const content = textOverride ?? draft.trim();
-    const targetId = conversationIdOverride ?? activeConversationId;
-    if (!targetId || !content) return;
 
-    const api = createApiClient(getToken);
-    setIsSending(true);
+    const content = textOverride ?? draft;
+    if (!content.trim()) return;
+
+    let targetId = conversationIdOverride ?? activeConversationId;
+    if (!targetId) {
+      const newConv = await createConversation();
+      if (!newConv) return;
+      targetId = newConv.id;
+    }
+
     setDraft("");
-    setStatus("Planner is working");
-
-    let addedUserMessageId: string | null = null;
+    setIsSending(true);
+    setStatus("Thinking...");
 
     try {
-      const response = await api<{
-        job_id: string;
-        status: string;
-        user_message: Message;
-      }>(`/conversations/${targetId}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ content }),
-      });
-
-      addedUserMessageId = response.user_message.id;
+      const token = await getToken();
 
       const currentConv = conversations.find((c) => c.id === targetId);
       if (
@@ -290,91 +294,115 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         void renameConversation(targetId, autoTitle);
       }
 
-      setMessages((current) => {
-        if (current.some((m) => m.id === response.user_message.id)) {
-          return current;
-        }
-        return [...current, response.user_message];
+      // Add optimistic user message
+      const userMsgId = `user-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: userMsgId,
+          role: "user",
+          content: content.trim(),
+          tool_name: null,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      // Connect to SSE stream
+      const response = await fetch(`${API_URL}/conversations/${targetId}/messages/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ content: content.trim() }),
       });
 
-      const jobId = response.job_id;
+      if (!response.ok || !response.body) {
+        throw new Error(`Streaming failed with status ${response.status}`);
+      }
 
-      pollJob(
-        async () => {
-          const job = await api<{
-            job_id: string;
-            status: string;
-            assistant_message: Message | null;
-            execution_steps: ExecutionStep[] | null;
-            error: string | null;
-          }>(`/conversations/${targetId}/messages/jobs/${jobId}`);
+      setIsStreamingActive(true);
+      setStreamingThought("");
+      setStreamingDelta("");
+      setStreamingStatus("Planner analyzing prompt...");
+      setStreamingTool("");
+      setStreamingAgent("");
 
-          if (job.execution_steps && job.execution_steps.length > 0) {
-            setCurrentExecutionSteps(job.execution_steps);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let currentEvent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("event: ")) {
+            currentEvent = trimmed.slice(7).trim();
+          } else if (trimmed.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(trimmed.slice(6));
+              if (currentEvent === "thinking") {
+                setStreamingStatus(data.status ?? "Thinking...");
+              } else if (currentEvent === "thought") {
+                setStreamingThought(data.thought ?? "");
+              } else if (currentEvent === "agent_route") {
+                setStreamingAgent(data.agent_name ?? "");
+              } else if (currentEvent === "tool_start") {
+                setStreamingTool(data.tool_name ?? "");
+              } else if (currentEvent === "token") {
+                setStreamingDelta((prev) => prev + (data.delta ?? ""));
+              } else if (currentEvent === "done") {
+                setMessages((current) => [
+                  ...current.filter((m) => m.id !== userMsgId),
+                  {
+                    id: `user-${Date.now()}`,
+                    role: "user",
+                    content: content.trim(),
+                    tool_name: null,
+                    created_at: new Date().toISOString(),
+                  },
+                  {
+                    id: data.message_id,
+                    role: data.role ?? "assistant",
+                    content: data.content,
+                    tool_name: data.tool_name ?? null,
+                    created_at: new Date().toISOString(),
+                  },
+                ]);
+                setIsStreamingActive(false);
+                setIsSending(false);
+                setStatus("Ready");
+                setStreamingThought("");
+                setStreamingDelta("");
+                setStreamingTool("");
+                setStreamingAgent("");
+                void loadConversations();
+              } else if (currentEvent === "error") {
+                toast.error(data.error ?? "Streaming error");
+                setIsStreamingActive(false);
+                setIsSending(false);
+              }
+            } catch (err) {
+              console.error("SSE parse error:", err);
+            }
           }
-
-          const succeeded = job.status === "succeeded" && job.assistant_message !== null;
-          const failed = job.status === "failed";
-
-          return {
-            status: job.status,
-            succeeded,
-            failed,
-            data: job.assistant_message ?? undefined,
-            error: job.error ?? undefined,
-          };
-        },
-        {
-          intervalMs: 1000,
-          timeoutMs: 60000,
-          onTimeout: () => {
-            setStatus("Planner timed out after 60 seconds");
-            toast.error("Error: Request timed out. Sent message removed.");
-            if (addedUserMessageId) {
-              setMessages((current) => current.filter((m) => m.id !== addedUserMessageId));
-            }
-            setCurrentExecutionSteps([]);
-            setIsSending(false);
-          },
-          onSucceeded: (assistantMessage) => {
-            setMessages((current) => [
-              ...current,
-              {
-                ...assistantMessage,
-                execution_steps: currentExecutionSteps,
-              },
-            ]);
-            setCurrentExecutionSteps([]);
-            setStatus(
-              assistantMessage.tool_name ? `Used ${assistantMessage.tool_name}` : "Ready"
-            );
-            setIsSending(false);
-            void loadConversations();
-          },
-          onFailed: async (error) => {
-            const message = error ?? "Planner failed";
-            setStatus(message);
-            toast.error(`Error: ${message}`);
-            if (targetId) {
-              const token = await getToken();
-              void loadMessages(token ?? undefined, targetId);
-            }
-            setCurrentExecutionSteps([]);
-            setIsSending(false);
-          },
         }
-      );
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Planner failed";
+      const message = error instanceof Error ? error.message : "Streaming failed";
       setStatus(message);
       toast.error(`Error: ${message}`);
-      if (addedUserMessageId) {
-        setMessages((current) => current.filter((m) => m.id !== addedUserMessageId));
-      }
-      setCurrentExecutionSteps([]);
+      setIsStreamingActive(false);
       setIsSending(false);
     }
-  }
+  };
 
   return (
     <ConversationContext.Provider
@@ -391,6 +419,12 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         editingTitle,
         setEditingTitle,
         conversationGroups,
+        streamingThought,
+        streamingDelta,
+        streamingStatus,
+        streamingTool,
+        streamingAgent,
+        isStreamingActive,
         loadConversations,
         loadMessages,
         createConversation,
@@ -404,12 +438,12 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   );
 };
 
-export function useConversations() {
+export const useConversation = () => {
   const context = useContext(ConversationContext);
-  if (context === undefined) {
-    throw new Error("useConversations must be used within a ConversationProvider");
+  if (!context) {
+    throw new Error("useConversation must be used within a ConversationProvider");
   }
   return context;
-}
+};
 
-export { ConversationContext };
+export const useConversations = useConversation;

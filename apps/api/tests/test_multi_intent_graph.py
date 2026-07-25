@@ -48,6 +48,6 @@ def test_thought_extraction_and_multi_intent_routing():
     result = graph.run(user_input="Write cpp addition code and search recent AI news")
 
     assert result.agent_name == "planner + coding + research"
-    assert "Code Solution" in result.answer
-    assert "Web Research & News" in result.answer
+    assert "Code Execution & Solution" in result.answer
+    assert "Web Research Results" in result.answer
     assert result.thought_process == "The user wants C++ addition code AND recent AI news."

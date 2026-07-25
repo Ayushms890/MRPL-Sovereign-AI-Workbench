@@ -1,10 +1,14 @@
+import asyncio
+import json
 import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import StreamingResponse
 
+from app.agents.planner import PlannerAgent
 from app.api.dependencies import get_current_user
-from app.api.deps_providers import get_conversation_repository
+from app.api.deps_providers import get_conversation_repository, get_planner_agent, get_redis_cache
 from app.api.rate_limit_dependencies import rate_limit_by_user
 from app.api.schemas import (
     AgentJobResponse,
@@ -15,7 +19,9 @@ from app.api.schemas import (
     MessageCreateRequest,
     MessageResponse,
 )
+from app.cache.redis_client import RedisCache
 from app.conversations.repository import ConversationRepository
+from app.conversations.summarization import build_effective_history
 from app.domain.entities import Conversation, Message, User
 from app.jobs.queue import build_job_queue, JobQueueError
 
@@ -93,6 +99,78 @@ def send_message(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return AgentJobResponse(job_id=job.id, status=job.status.value, user_message=_message_response(user_message))
+
+
+@router.post(
+    "/{conversation_id}/messages/stream",
+    dependencies=[Depends(rate_limit_by_user("chat_message_stream", limit=30, window_seconds=60))],
+)
+async def stream_message(
+    conversation_id: str,
+    payload: MessageCreateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    agent: Annotated[PlannerAgent, Depends(get_planner_agent)],
+    cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
+) -> StreamingResponse:
+    _require_conversation(repo, conversation_id, current_user.id)
+
+    content = payload.content.strip()
+    user_message = repo.add_message(conversation_id=conversation_id, role="user", content=content)
+
+    async def event_generator():
+        all_messages = [
+            m for m in repo.list_messages(conversation_id)
+            if m.id != user_message.id
+        ]
+        history = build_effective_history(
+            messages=all_messages,
+            llm_provider=getattr(agent, "llm_provider", None),
+            cache=cache,
+            conversation_id=conversation_id,
+        )
+
+        yield f"event: thinking\ndata: {json.dumps({'status': 'Planner analyzing prompt...'})}\n\n"
+        await asyncio.sleep(0.01)
+
+        try:
+            result = agent.run(user_input=content, history=history)
+
+            if result.thought_process:
+                yield f"event: thought\ndata: {json.dumps({'thought': result.thought_process})}\n\n"
+                await asyncio.sleep(0.01)
+
+            if result.agent_name:
+                yield f"event: agent_route\ndata: {json.dumps({'agent_name': result.agent_name})}\n\n"
+                await asyncio.sleep(0.01)
+
+            if result.tool_name:
+                tool_args = result.tool_arguments if isinstance(getattr(result, "tool_arguments", None), dict) else {}
+                yield f"event: tool_start\ndata: {json.dumps({'tool_name': result.tool_name, 'tool_arguments': tool_args})}\n\n"
+                await asyncio.sleep(0.01)
+
+            answer = result.answer
+            chunk_size = 16
+            for i in range(0, len(answer), chunk_size):
+                chunk = answer[i:i + chunk_size]
+                yield f"event: token\ndata: {json.dumps({'delta': chunk})}\n\n"
+                await asyncio.sleep(0.01)
+
+            assistant_message = repo.add_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=answer,
+                tool_name=result.tool_name,
+            )
+            yield f"event: done\ndata: {json.dumps({'message_id': assistant_message.id, 'role': 'assistant', 'content': answer, 'tool_name': result.tool_name})}\n\n"
+
+        except Exception as exc:
+            logger.error("Error during streaming chat execution: %s", exc, exc_info=True)
+            error_text = f"Request failed: {exc}"
+            repo.add_message(conversation_id=conversation_id, role="assistant", content=error_text)
+            yield f"event: error\ndata: {json.dumps({'error': error_text})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/{conversation_id}/messages/jobs/{job_id}", response_model=AgentJobStatusResponse)

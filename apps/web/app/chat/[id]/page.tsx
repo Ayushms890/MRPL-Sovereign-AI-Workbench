@@ -7,16 +7,23 @@ import { User, Bot, Wrench, Copy, ThumbsUp, ThumbsDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ExecutionTrace } from "../../components/execution-trace";
+import { StreamingThoughtAccordion } from "../../components/streaming-thought-accordion";
 
 export default function ChatSessionPage() {
   const params = useParams();
   const chatId = params.id as string;
-  
+
   const {
     token,
     messages,
     isSending,
     currentExecutionSteps,
+    streamingThought,
+    streamingDelta,
+    streamingStatus,
+    streamingTool,
+    streamingAgent,
+    isStreamingActive,
     setActiveConversationId,
     loadMessages,
   } = useChat();
@@ -34,10 +41,13 @@ export default function ChatSessionPage() {
         const isUser = message.role === "user";
         return (
           <div key={message.id} className={`message-group ${isUser ? "user-group" : "assistant-group"}`}>
-            <div className={`message-avatar ${isUser ? "user-avatar" : "assistant-avatar"}`} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div
+              className={`message-avatar ${isUser ? "user-avatar" : "assistant-avatar"}`}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
               {isUser ? <User size={16} /> : <Bot size={16} />}
             </div>
-            
+
             <div className="message-bubble-wrapper">
               {!isUser && message.execution_steps && message.execution_steps.length > 0 && (
                 <ExecutionTrace steps={message.execution_steps} isPending={false} />
@@ -50,7 +60,7 @@ export default function ChatSessionPage() {
                     {message.content}
                   </ReactMarkdown>
                 </div>
-                
+
                 {message.tool_name && (
                   <div className="tool-pill" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span className="tool-icon" style={{ display: "flex", alignItems: "center" }}>
@@ -60,7 +70,7 @@ export default function ChatSessionPage() {
                   </div>
                 )}
               </article>
-              
+
               {!isUser && (
                 <div className="message-actions">
                   <button
@@ -86,9 +96,58 @@ export default function ChatSessionPage() {
         );
       })}
 
-      {isSending && (
+      {/* Live SSE Streaming Thought & Token Response */}
+      {isStreamingActive && (
         <div className="message-group assistant-group pending-group">
-          <div className="message-avatar assistant-avatar" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div
+            className="message-avatar assistant-avatar"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
+            <Bot size={16} />
+          </div>
+          <div className="message-bubble-wrapper" style={{ width: "100%" }}>
+            <StreamingThoughtAccordion
+              thoughtText={streamingThought}
+              isThinking={!streamingDelta}
+              statusText={streamingStatus}
+              toolName={streamingTool}
+              agentName={streamingAgent}
+              isStreamingDone={!isStreamingActive}
+            />
+
+            {streamingDelta ? (
+              <article className="message-bubble">
+                <span>Archimedes</span>
+                <div className="message-markdown">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {streamingDelta}
+                  </ReactMarkdown>
+                </div>
+              </article>
+            ) : (
+              !streamingThought && (
+                <article className="message-bubble pending-bubble">
+                  <span>Archimedes</span>
+                  <div className="typing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <p className="pending-text">{streamingStatus || "Planner is reasoning..."}</p>
+                </article>
+              )
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Background Job Trace Fallback (if non-streaming job active) */}
+      {isSending && !isStreamingActive && (
+        <div className="message-group assistant-group pending-group">
+          <div
+            className="message-avatar assistant-avatar"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
             <Bot size={16} />
           </div>
           <div className="message-bubble-wrapper">
@@ -102,7 +161,7 @@ export default function ChatSessionPage() {
                   <span></span>
                   <span></span>
                 </div>
-                <p className="pending-text">Planner is executing agent workflow nodes...</p>
+                <p className="pending-text">Planner is executing workflow...</p>
               </article>
             )}
           </div>
