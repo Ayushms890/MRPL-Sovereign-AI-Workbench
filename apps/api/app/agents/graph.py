@@ -15,6 +15,7 @@ class AgentGraphState(TypedDict, total=False):
     history: list[LLMMessage]
     route: str
     answer: str
+    thought_process: str | None
     tool_name: str | None
     tool_arguments: dict | None
     tool_output: str | None
@@ -53,6 +54,7 @@ class MultiAgentGraph(PlannerAgent):
             retrieval_query=final_state.get("retrieval_query"),
             retrieval_chunk_ids=final_state.get("retrieval_chunk_ids"),
             retrieval_scores=final_state.get("retrieval_scores"),
+            thought_process=final_state.get("thought_process"),
         )
 
     def _build_graph(self):
@@ -61,15 +63,23 @@ class MultiAgentGraph(PlannerAgent):
         graph.add_node("research", self._research_node)
         graph.add_node("knowledge", self._knowledge_node)
         graph.add_node("coding", self._coding_node)
+        graph.add_node("multi", self._multi_node)
         graph.set_entry_point("planner")
         graph.add_conditional_edges(
             "planner",
             self._route_from_planner,
-            {"research": "research", "knowledge": "knowledge", "coding": "coding", "end": END},
+            {
+                "research": "research",
+                "knowledge": "knowledge",
+                "coding": "coding",
+                "multi": "multi",
+                "end": END,
+            },
         )
         graph.add_edge("research", END)
         graph.add_edge("knowledge", END)
         graph.add_edge("coding", END)
+        graph.add_edge("multi", END)
         return graph.compile()
 
     def _planner_node(self, state: AgentGraphState) -> AgentGraphState:
@@ -101,12 +111,13 @@ class MultiAgentGraph(PlannerAgent):
 
         system_content = (
             "You are the Planner agent in an AI OS monolith. Decide whether the user's request "
-            "needs a specialist. If it asks about writing, debugging, executing, or running code, "
-            "respond exactly with 'ROUTE: coding'. If it asks about the user's uploaded/pasted "
-            "knowledge, documents, notes, or saved context AND the context below is insufficient to "
-            "fully answer, respond exactly with 'ROUTE: knowledge'. If it needs research, current facts, "
-            "investigation, or tool-supported lookup, respond exactly with 'ROUTE: research'. Otherwise "
-            "answer directly and prefix the answer with 'ANSWER:'.\n\n"
+            "needs a specialist. "
+            "If the request contains MULTIPLE distinct parts (e.g. asking for writing/executing code AND web research/current news), "
+            "respond exactly with 'ROUTE: coding, research'. "
+            "If it asks specifically about writing, debugging, executing, or running code, respond exactly with 'ROUTE: coding'. "
+            "If it asks about the user's uploaded/pasted knowledge, documents, notes, or saved context AND the context below is insufficient to fully answer, respond exactly with 'ROUTE: knowledge'. "
+            "If it needs research, current facts, investigation, or tool-supported lookup, respond exactly with 'ROUTE: research'. "
+            "Otherwise answer directly and prefix the answer with 'ANSWER:'.\n\n"
         )
         
         if context_str:
@@ -124,27 +135,42 @@ class MultiAgentGraph(PlannerAgent):
         ]
         response = self.llm_provider.generate(messages)
         content = response.content.strip()
-        if content.lower().startswith("route: coding"):
-            return {"route": "coding"}
-        if content.lower().startswith("route: knowledge"):
-            return {"route": "knowledge"}
-        if content.lower().startswith("route: research"):
-            return {"route": "research"}
-        if content.lower().startswith("answer:"):
+        thought = response.thought
+
+        import re
+        if "<thought>" in content.lower():
+            t_match = re.search(r"<thought>(.*?)</thought>", content, flags=re.DOTALL | re.IGNORECASE)
+            if t_match and not thought:
+                thought = t_match.group(1).strip()
+            content = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
+
+        content_lower = content.lower()
+        if "route: coding, research" in content_lower or "route: research, coding" in content_lower or ("coding" in content_lower and "research" in content_lower and "route:" in content_lower):
+            return {"route": "multi", "thought_process": thought}
+        if "route: coding" in content_lower:
+            return {"route": "coding", "thought_process": thought}
+        if "route: knowledge" in content_lower:
+            return {"route": "knowledge", "thought_process": thought}
+        if "route: research" in content_lower:
+            return {"route": "research", "thought_process": thought}
+        if content_lower.startswith("answer:"):
             content = content.split(":", 1)[1].strip()
         
         return {
             "route": "end", 
             "answer": content, 
             "agent_name": "planner",
+            "thought_process": thought,
             "retrieval_query": state["user_input"] if context_str else None,
             "retrieval_chunk_ids": retrieval_chunk_ids if context_str else None,
             "retrieval_scores": retrieval_scores if context_str else None,
         }
 
     @staticmethod
-    def _route_from_planner(state: AgentGraphState) -> Literal["research", "knowledge", "coding", "end"]:
+    def _route_from_planner(state: AgentGraphState) -> Literal["research", "knowledge", "coding", "multi", "end"]:
         route = state.get("route")
+        if route == "multi":
+            return "multi"
         if route == "coding":
             return "coding"
         if route == "research":
@@ -152,6 +178,25 @@ class MultiAgentGraph(PlannerAgent):
         if route == "knowledge":
             return "knowledge"
         return "end"
+
+    def _multi_node(self, state: AgentGraphState) -> AgentGraphState:
+        coding_res = self._coding_node(state)
+        research_res = self._research_node(state)
+        
+        answer_parts = []
+        if coding_res.get("answer"):
+            answer_parts.append(f"### Code Solution\n{coding_res['answer']}")
+        if research_res.get("answer"):
+            answer_parts.append(f"### Web Research & News\n{research_res['answer']}")
+        
+        tools_used = [t for t in [coding_res.get("tool_name"), research_res.get("tool_name")] if t]
+        
+        return {
+            "answer": "\n\n---\n\n".join(answer_parts),
+            "tool_name": ", ".join(tools_used) if tools_used else None,
+            "agent_name": "planner + coding + research",
+            "thought_process": state.get("thought_process"),
+        }
 
     def _research_node(self, state: AgentGraphState) -> AgentGraphState:
         research_agent = self.agents.build("research", self._agent_context())

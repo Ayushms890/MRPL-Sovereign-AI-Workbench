@@ -58,6 +58,16 @@ class GeminiProvider(LLMProvider):
         finish_reason = candidate.get("finishReason")
         parts = candidate.get("content", {}).get("parts", [])
 
+        thought_parts = [part.get("text", "") for part in parts if part.get("thought")]
+        text_parts = [part.get("text", "") for part in parts if not part.get("thought")]
+        
+        raw_text = "".join(text_parts).strip()
+        extracted_thought, clean_text = self._extract_thought_tags(raw_text)
+        
+        combined_thought = None
+        if thought_parts or extracted_thought:
+            combined_thought = "\n".join(filter(None, ["".join(thought_parts).strip(), extracted_thought])).strip()
+
         for part in parts:
             function_call = part.get("functionCall")
             if function_call:
@@ -67,14 +77,24 @@ class GeminiProvider(LLMProvider):
                         name=function_call.get("name", ""),
                         arguments=function_call.get("args") or {},
                     ),
+                    thought=combined_thought,
                 )
 
-        text = "".join(part.get("text", "") for part in parts if not part.get("thought")).strip()
-        if finish_reason == "MAX_TOKENS" and not text:
+        if finish_reason == "MAX_TOKENS" and not clean_text:
             raise LLMGenerationError(
                 f"Gemini stopped with finishReason=MAX_TOKENS before producing an answer (model={self.model})."
             )
-        return LLMResponse(content=text or "The model returned an empty response.")
+        return LLMResponse(content=clean_text or "The model returned an empty response.", thought=combined_thought)
+
+    @staticmethod
+    def _extract_thought_tags(raw_text: str) -> tuple[str | None, str]:
+        import re
+        thought_match = re.search(r"<thought>(.*?)</thought>", raw_text, flags=re.DOTALL | re.IGNORECASE)
+        if thought_match:
+            thought = thought_match.group(1).strip()
+            clean_text = re.sub(r"<thought>.*?</thought>", "", raw_text, flags=re.DOTALL | re.IGNORECASE).strip()
+            return thought, clean_text
+        return None, raw_text.strip()
 
     def _post_generate_content(self, url: str, payload: dict) -> httpx.Response:
         max_attempts = 4

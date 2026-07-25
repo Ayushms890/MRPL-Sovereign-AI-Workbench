@@ -15,3 +15,4 @@ coverage/
 output.txt
 digest.txt
 tmp-run-logs/
+*.pem

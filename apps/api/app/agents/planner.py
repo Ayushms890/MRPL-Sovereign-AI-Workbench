@@ -15,6 +15,7 @@ class PlannerResult:
     retrieval_query: str | None = None
     retrieval_chunk_ids: list[str] | None = None
     retrieval_scores: list[float] | None = None
+    thought_process: str | None = None
 
 
 class PlannerAgent(Protocol):

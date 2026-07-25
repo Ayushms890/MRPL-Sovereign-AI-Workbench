@@ -16,6 +16,7 @@ class LLMMessage:
 class LLMResponse:
     content: str
     tool_call: "LLMToolCall | None" = None
+    thought: str | None = None
 
 
 @dataclass(slots=True)

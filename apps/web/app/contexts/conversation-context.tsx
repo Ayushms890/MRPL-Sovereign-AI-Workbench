@@ -351,12 +351,13 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
             setIsSending(false);
             void loadConversations();
           },
-          onFailed: (error) => {
+          onFailed: async (error) => {
             const message = error ?? "Planner failed";
             setStatus(message);
             toast.error(`Error: ${message}`);
             if (targetId) {
-              void loadMessages(getToken(), targetId);
+              const token = await getToken();
+              void loadMessages(token ?? undefined, targetId);
             }
             setCurrentExecutionSteps([]);
             setIsSending(false);

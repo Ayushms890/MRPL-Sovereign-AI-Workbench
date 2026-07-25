@@ -99,6 +99,14 @@ def run_chat_agent_job(payload: dict) -> dict:
         try:
             result = agent.run(user_input=content, history=history)
             if queue and job_id:
+                if result.thought_process:
+                    queue.add_execution_step(
+                        job_id,
+                        "thinking",
+                        "Model Reasoning",
+                        "completed",
+                        metadata={"thought": result.thought_process},
+                    )
                 if result.agent_name:
                     queue.add_execution_step(
                         job_id,

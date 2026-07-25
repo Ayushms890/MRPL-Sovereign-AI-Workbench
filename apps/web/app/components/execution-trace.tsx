@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronDown, ChevronUp, Cpu, Wrench, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
+import { ChevronDown, ChevronUp, Cpu, Wrench, CheckCircle2, Loader2, AlertCircle, Lightbulb } from "lucide-react";
 
 export type ExecutionStep = {
   step: string;
@@ -18,8 +18,13 @@ interface ExecutionTraceProps {
 
 export function ExecutionTrace({ steps, isPending = false }: ExecutionTraceProps) {
   const [isExpanded, setIsExpanded] = useState<boolean>(isPending);
+  const [openThoughts, setOpenThoughts] = useState<Record<number, boolean>>({});
 
   if (!steps || steps.length === 0) return null;
+
+  const toggleThought = (idx: number) => {
+    setOpenThoughts((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
 
   return (
     <div className="execution-trace-card" style={{ margin: "10px 0", borderRadius: 8, border: "2px solid #000000", background: "#f8fafc", overflow: "hidden", fontSize: "13px" }}>
@@ -58,6 +63,7 @@ export function ExecutionTrace({ steps, isPending = false }: ExecutionTraceProps
             const isCompleted = item.status === "completed";
             const isFailed = item.status === "failed";
             const isRunning = item.status === "running";
+            const isThoughtOpen = !!openThoughts[idx];
 
             return (
               <div
@@ -79,10 +85,42 @@ export function ExecutionTrace({ steps, isPending = false }: ExecutionTraceProps
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, color: "#1e293b" }}>{item.label}</div>
+                  
                   {item.metadata && item.metadata.tool_name && (
                     <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, fontSize: "11px", color: "#475569" }}>
                       <Wrench size={11} />
                       <span>Tool: <code>{item.metadata.tool_name}</code></span>
+                    </div>
+                  )}
+
+                  {item.metadata && item.metadata.thought && (
+                    <div style={{ marginTop: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleThought(idx)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          background: "#f1f5f9",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: 4,
+                          padding: "4px 8px",
+                          fontSize: "11px",
+                          color: "#334155",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        <Lightbulb size={12} style={{ color: "#eab308" }} />
+                        <span>View Model Reasoning</span>
+                        {isThoughtOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      </button>
+                      {isThoughtOpen && (
+                        <div style={{ marginTop: 6, padding: 8, background: "#f8fafc", borderLeft: "3px solid #eab308", borderRadius: 4, fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", color: "#475569" }}>
+                          {item.metadata.thought}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
