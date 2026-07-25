@@ -180,14 +180,32 @@ class MultiAgentGraph(PlannerAgent):
         return "end"
 
     def _multi_node(self, state: AgentGraphState) -> AgentGraphState:
-        coding_res = self._coding_node(state)
-        research_res = self._research_node(state)
+        user_input = state["user_input"]
+        
+        # Dedicated sub-task states with targeted instructions
+        coding_state = {
+            **state,
+            "user_input": (
+                f"Fulfill ONLY the code generation / code execution requirement from this user request. "
+                f"Write or execute code using the execute_code tool if needed. Do NOT perform web searches: {user_input}"
+            ),
+        }
+        research_state = {
+            **state,
+            "user_input": (
+                f"Fulfill ONLY the web search / research / news requirement from this user request. "
+                f"Search the live web using the web_search tool if needed. Do NOT write or execute code: {user_input}"
+            ),
+        }
+        
+        coding_res = self._coding_node(coding_state)
+        research_res = self._research_node(research_state)
         
         answer_parts = []
         if coding_res.get("answer"):
-            answer_parts.append(f"### Code Solution\n{coding_res['answer']}")
+            answer_parts.append(f"### Code Execution & Solution\n{coding_res['answer']}")
         if research_res.get("answer"):
-            answer_parts.append(f"### Web Research & News\n{research_res['answer']}")
+            answer_parts.append(f"### Web Research Results\n{research_res['answer']}")
         
         tools_used = [t for t in [coding_res.get("tool_name"), research_res.get("tool_name")] if t]
         
