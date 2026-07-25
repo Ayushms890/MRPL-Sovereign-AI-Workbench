@@ -28,6 +28,8 @@ def run_chat_agent_job(payload: dict) -> dict:
     """payload: {"conversation_id": str, "user_id": str, "user_message_id": str, "content": str}"""
     get_engine()
     session = SessionLocal()
+    user_db_session = None
+    user_engine = None
     try:
         conversation_id = payload["conversation_id"]
         user_id = payload["user_id"]
@@ -71,9 +73,24 @@ def run_chat_agent_job(payload: dict) -> dict:
             dimensions=settings.embedding_dimensions,
         )
 
+        from app.auth.api_key_repository import UserApiKeyRepository
+        db_key = UserApiKeyRepository(session).get_for_user_provider(user_id, "database")
+        if db_key is not None:
+            try:
+                from app.auth.encryption import EncryptionService
+                from sqlalchemy import create_engine
+                from sqlalchemy.orm import sessionmaker
+                user_db_url = EncryptionService().decrypt(db_key.encrypted_key)
+                if user_db_url:
+                    user_engine = create_engine(user_db_url)
+                    SessionLocalUser = sessionmaker(bind=user_engine)
+                    user_db_session = SessionLocalUser()
+            except Exception:
+                logger.exception("Failed to connect to user's database")
+
         agent = MultiAgentGraph(
             llm_provider=llm_provider,
-            tools=build_tool_registry(session),
+            tools=build_tool_registry(session, user_db_session=user_db_session),
             agents=build_agent_registry(),
             embedding_provider=embedding_provider,
             retrieval_repository=RetrievalRepository(session),

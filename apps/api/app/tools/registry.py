@@ -27,7 +27,15 @@ class ToolRegistry:
         ]
 
 
-def build_tool_registry(session: Session | None = None) -> ToolRegistry:
+def build_tool_registry(
+    session: Session | None = None,
+    user_db_session: Session | None = None,
+    force_platform_db: bool = False,
+) -> ToolRegistry:
+    db_session = user_db_session
+    if db_session is None and force_platform_db:
+        db_session = session
+
     return ToolRegistry(
         tools=[
             CurrentTimeTool(),
@@ -36,6 +44,6 @@ def build_tool_registry(session: Session | None = None) -> ToolRegistry:
             WebReaderTool(),
             ChartGeneratorTool(),
             GithubInspectorTool(),
-            DbInspectorTool(session=session),
+            DbInspectorTool(session=db_session),
         ]
     )
