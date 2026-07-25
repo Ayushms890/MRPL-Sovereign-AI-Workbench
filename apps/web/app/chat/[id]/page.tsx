@@ -12,6 +12,7 @@ import { MermaidDiagram } from "../../components/mermaid-diagram";
 import { SpeechPlayer } from "../../components/voice-input";
 import { ArtifactDrawer } from "../../components/artifact-drawer";
 import { ExportShareModal } from "../../components/export-share-modal";
+import { ChartRenderer } from "../../components/chart-renderer";
 
 export default function ChatSessionPage() {
   const params = useParams();
@@ -53,6 +54,10 @@ export default function ChatSessionPage() {
 
       if (!inline && lang === "mermaid") {
         return <MermaidDiagram chart={codeString} />;
+      }
+
+      if (!inline && (lang === "chart" || className?.includes("json:chart") || codeString.includes('"chart_type":'))) {
+        return <ChartRenderer jsonContent={codeString} />;
       }
 
       if (!inline && codeString.length > 80) {
