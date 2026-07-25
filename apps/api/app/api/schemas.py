@@ -118,3 +118,13 @@ class AgentJobStatusResponse(BaseModel):
     assistant_message: MessageResponse | None = None
     execution_steps: list[dict] | None = None
     error: str | None = None
+
+
+class ShareCreateResponse(BaseModel):
+    share_id: str
+    title: str
+
+
+class ShareSnapshotResponse(BaseModel):
+    title: str
+    messages: list[MessageResponse]

@@ -19,13 +19,16 @@ import {
   Search,
   Paperclip,
   Smile,
-  SendHorizontal
+  SendHorizontal,
+  Share2
 } from "lucide-react";
 import { useAuth } from "../contexts/auth-context";
 import { VoiceInput } from "../components/voice-input";
+import { ExportShareModal } from "../components/export-share-modal";
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const [isExportOpen, setIsExportOpen] = useState(false);
   const {
     isLoaded,
     isSignedIn,
@@ -33,6 +36,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     token,
     mounted,
     conversations,
+    messages,
     activeConversationId,
     setActiveConversationId,
     sidebarWidth,
@@ -313,6 +317,31 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                     <Trash2 size={14} />
                   </button>
                 )}
+                {activeConversationId && (
+                  <button
+                    type="button"
+                    onClick={() => setIsExportOpen(true)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 12px",
+                      background: "#ffffff",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      color: "#334155",
+                      marginRight: "8px",
+                      fontWeight: 500,
+                      alignSelf: "center",
+                      height: "32px"
+                    }}
+                  >
+                    <Share2 size={13} style={{ color: "#4f46e5" }} />
+                    <span>Export & Share</span>
+                  </button>
+                )}
                 <div className="header-search-capsule">
                   <input type="text" placeholder="Search..." />
                   <span className="search-icon" style={{ display: "flex", alignItems: "center" }}>
@@ -587,6 +616,15 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         </div>
       )}
 
+      {/* Export & Share Modal */}
+      {isExportOpen && (
+        <ExportShareModal
+          isOpen={isExportOpen}
+          onClose={() => setIsExportOpen(false)}
+          title={conversations.find((c) => c.id === activeConversationId)?.title || "Archimedes Chat"}
+          messages={messages || []}
+        />
+      )}
       {/* API Key Warning Modal */}
       {isApiKeyWarningOpen && (
         <div className="modal-backdrop" onClick={() => setIsApiKeyWarningOpen(false)}>

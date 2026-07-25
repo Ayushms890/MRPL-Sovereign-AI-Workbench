@@ -85,17 +85,6 @@ export default function ChatSessionPage() {
   return (
     <div className="messages-container" style={{ display: "flex", width: "100%" }}>
       <div className="messages" style={{ flex: 1 }}>
-        {/* Header Action Bar */}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
-          <button
-            type="button"
-            onClick={() => setIsExportOpen(true)}
-            style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "6px", fontSize: "12px", cursor: "pointer", color: "#334155" }}
-          >
-            <Share2 size={13} />
-            <span>Export & Share</span>
-          </button>
-        </div>
 
         {messages.map((message) => {
           const isUser = message.role === "user";
