@@ -2,8 +2,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.agents.coding import CodingAgent
+from app.agents.data_analyst import DataAnalystAgent
+from app.agents.devops_agent import DevOpsAgent
 from app.agents.knowledge import KnowledgeAgent
 from app.agents.research import ResearchAgent
+from app.agents.security_auditor import SecurityAuditorAgent
 from app.providers.base import LLMProvider
 from app.providers.embeddings.base import EmbeddingProvider
 from app.retrieval.repository import RetrievalRepository
@@ -42,6 +45,9 @@ def build_agent_registry() -> AgentRegistry:
         factories={
             ResearchAgent.name: lambda context: ResearchAgent(context.llm_provider, context.tools),
             CodingAgent.name: lambda context: CodingAgent(context.llm_provider, context.tools),
+            DataAnalystAgent.name: lambda context: DataAnalystAgent(context.llm_provider, context.tools),
+            SecurityAuditorAgent.name: lambda context: SecurityAuditorAgent(context.llm_provider, context.tools),
+            DevOpsAgent.name: lambda context: DevOpsAgent(context.llm_provider, context.tools),
             KnowledgeAgent.name: lambda context: KnowledgeAgent(
                 llm_provider=context.llm_provider,
                 embedding_provider=context.embedding_provider,

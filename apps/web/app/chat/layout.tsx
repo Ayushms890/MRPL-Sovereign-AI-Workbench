@@ -22,6 +22,7 @@ import {
   SendHorizontal
 } from "lucide-react";
 import { useAuth } from "../contexts/auth-context";
+import { VoiceInput } from "../components/voice-input";
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -349,6 +350,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 <button type="button" className="composer-icon-btn" title="Add emoji">
                   <Smile size={16} />
                 </button>
+                <VoiceInput onTranscript={(text) => setDraft(draft ? `${draft} ${text}` : text)} />
                 <button
                   type="submit"
                   className="composer-send-btn"
