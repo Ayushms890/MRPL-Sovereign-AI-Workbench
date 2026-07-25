@@ -24,4 +24,5 @@ jobs:
           script: |
             cd Archimedes/apps/api
             git pull origin main
+            docker compose down || true
             docker compose up -d --build
