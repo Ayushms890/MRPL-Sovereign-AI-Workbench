@@ -26,9 +26,119 @@ import { useAuth } from "../contexts/auth-context";
 import { VoiceInput } from "../components/voice-input";
 import { ExportShareModal } from "../components/export-share-modal";
 
+const COMMANDS = [
+  {
+    cmd: "/security",
+    label: "Security Audit",
+    desc: "Audit codebase files and package manifests for secrets and vulnerabilities",
+    prompt: "Trigger Security Specialist to audit the project codebases and identify security issues."
+  },
+  {
+    cmd: "/devops",
+    label: "DevOps Deploy Check",
+    desc: "Analyze Docker configurations, action workflows, and deployment state",
+    prompt: "Trigger DevOps Specialist to inspect Docker configuration files and CI/CD pipelines."
+  },
+  {
+    cmd: "/database",
+    label: "DB Optimization",
+    desc: "Inspect SQL schemas, tables, and query execution indexes",
+    prompt: "Trigger Database Administrator to list tables, inspect schema structure, and analyze query performance."
+  },
+  {
+    cmd: "/research",
+    label: "Web Research",
+    desc: "Execute Tavily search queries and fetch web document content",
+    prompt: "Trigger Research Analyst to search the web for [topic] and compile a detailed report."
+  },
+  {
+    cmd: "/generate",
+    label: "Code Generation",
+    desc: "Write/edit project workspace code files and execute tests",
+    prompt: "Trigger Code Generator to write or edit code files for [task] and run local tests."
+  }
+];
+
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState(COMMANDS);
+  const [suggestionsIndex, setSuggestionsIndex] = useState(0);
+
+  const handleInputChange = (val: string) => {
+    setDraft(val);
+    const textarea = document.getElementById("composer-textarea") as HTMLTextAreaElement | null;
+    if (!textarea) return;
+
+    const cursorPosition = textarea.selectionStart;
+    const textBeforeCursor = val.slice(0, cursorPosition);
+    const words = textBeforeCursor.split(/\s+/);
+    const lastWord = words[words.length - 1];
+
+    if (lastWord.startsWith("/")) {
+      const filterVal = lastWord.toLowerCase();
+      const matched = COMMANDS.filter((c) => c.cmd.startsWith(filterVal));
+      if (matched.length > 0) {
+        setSuggestions(matched);
+        setShowSuggestions(true);
+        setSuggestionsIndex(0);
+      } else {
+        setShowSuggestions(false);
+      }
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectSuggestion = (index: number) => {
+    const selected = suggestions[index];
+    const textarea = document.getElementById("composer-textarea") as HTMLTextAreaElement | null;
+    if (!textarea) return;
+
+    const cursorPosition = textarea.selectionStart;
+    const textBeforeCursor = draft.slice(0, cursorPosition);
+    const textAfterCursor = draft.slice(cursorPosition);
+
+    const words = textBeforeCursor.split(/\s+/);
+    words[words.length - 1] = selected.prompt;
+
+    const newTextBefore = words.join(" ");
+    const newText = newTextBefore + textAfterCursor;
+
+    setDraft(newText);
+    setShowSuggestions(false);
+
+    setTimeout(() => {
+      textarea.focus();
+      const newCursorPos = newTextBefore.length;
+      textarea.setSelectionRange(newCursorPos, newCursorPos);
+    }, 10);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSuggestions && suggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSuggestionsIndex((prev) => (prev + 1) % suggestions.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSuggestionsIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+      } else if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectSuggestion(suggestionsIndex);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSuggestions(false);
+      }
+    } else {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        e.currentTarget.form?.requestSubmit();
+      }
+    }
+  };
+
   const {
     isLoaded,
     isSignedIn,
@@ -84,6 +194,14 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     deleteApiKey,
     uploadDocument,
   } = useChat();
+
+  const scrollViewportRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollViewportRef.current) {
+      scrollViewportRef.current.scrollTop = scrollViewportRef.current.scrollHeight;
+    }
+  }, [messages, activeConversationId, isSending]);
 
   const startResizing = (e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -353,24 +471,76 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           </header>
 
           {/* Child Viewport Content (Message thread or Empty screen) */}
-          <div style={{ flex: 1, overflowY: "auto" }}>
+          <div ref={scrollViewportRef} style={{ flex: 1, overflowY: "auto" }}>
             {children}
           </div>
 
           {/* Composer Input Area */}
-          <form className="composer-container" onSubmit={(e) => void sendMessage(e)}>
-            <div className="composer-box">
+          <form
+            className="composer-container"
+            onSubmit={(e) => {
+              setShowSuggestions(false);
+              void sendMessage(e);
+            }}
+          >
+            <div className="composer-box" style={{ position: "relative" }}>
+              {showSuggestions && suggestions.length > 0 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: "100%",
+                    left: 0,
+                    right: 0,
+                    marginBottom: "8px",
+                    background: "#ffffff",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "12px",
+                    boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+                    zIndex: 1000,
+                    overflow: "hidden",
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
+                  <div style={{ padding: "8px 12px", background: "#f8fafc", borderBottom: "1px solid #cbd5e1", fontSize: "11px", fontWeight: 600, color: "#64748b" }}>
+                    Specialist Agents & Tools Commands
+                  </div>
+                  <div style={{ maxHeight: "200px", overflowY: "auto" }}>
+                    {suggestions.map((cmd, idx) => {
+                      const isSelected = idx === suggestionsIndex;
+                      return (
+                        <div
+                          key={cmd.cmd}
+                          onClick={() => selectSuggestion(idx)}
+                          onMouseEnter={() => setSuggestionsIndex(idx)}
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            padding: "10px 14px",
+                            cursor: "pointer",
+                            background: isSelected ? "#f1f5f9" : "transparent",
+                            borderLeft: isSelected ? "4px solid #6366f1" : "4px solid transparent",
+                            transition: "all 0.15s ease",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontWeight: 700, fontSize: "13px", color: isSelected ? "#4f46e5" : "#0f172a" }}>{cmd.cmd}</span>
+                            <span style={{ fontSize: "11px", color: "#64748b", background: "#e0e7ff", padding: "2px 6px", borderRadius: "4px" }}>{cmd.label}</span>
+                          </div>
+                          <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>{cmd.desc}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <textarea
+                id="composer-textarea"
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => handleInputChange(event.target.value)}
                 placeholder="Type a new message here..."
                 disabled={!activeConversationId || isSending}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    e.currentTarget.form?.requestSubmit();
-                  }
-                }}
+                onKeyDown={handleKeyDown}
               />
               <div className="composer-toolbar-right">
                 <button type="button" className="composer-icon-btn" title="Add attachment">
