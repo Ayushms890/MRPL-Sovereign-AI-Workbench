@@ -1,3 +1,4 @@
+# NOTE: This test covers the experimental, non-default streaming path.
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient

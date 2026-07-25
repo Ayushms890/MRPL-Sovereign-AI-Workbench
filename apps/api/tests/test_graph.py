@@ -130,3 +130,14 @@ def test_graph_planner_uses_injected_knowledge() -> None:
     assert system_msg.role == "system"
     assert "<retrieved_chunk id=chunk-1 score=0.0100>" in system_msg.content
     assert "uploaded project notes" in system_msg.content
+
+
+def test_graph_planner_does_not_misroute_coincidental_keywords() -> None:
+    provider = ScriptedGraphProvider([LLMResponse(content="ANSWER: I will help you with security auditor and devops infrastructure.")])
+    graph = MultiAgentGraph(llm_provider=provider, tools=ToolRegistry([]), agents=build_agent_registry())
+
+    result = graph.run("Explain how security auditor works")
+
+    assert result.answer == "I will help you with security auditor and devops infrastructure."
+    assert result.agent_name == "planner"
+    assert len(provider.calls) == 1

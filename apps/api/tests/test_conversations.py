@@ -194,6 +194,14 @@ def test_send_message_logs_tool_call_when_provider_requests_tool(
     assert tool_call.arguments == "{}"
     assert "Current local time is" in tool_call.output
 
+    status_response = client.get(f"/conversations/{conversation_id}/messages/jobs/{job_id}", headers=auth_headers)
+    assert status_response.status_code == 200
+    res_data = status_response.json()
+    assert res_data["status"] == "succeeded"
+    assert res_data["assistant_message"]["tool_name"] == "current_time"
+    assert res_data["assistant_message"]["agent_name"] == "research"
+    assert res_data["assistant_message"]["tool_arguments"] == {}
+
 
 def test_send_message_returns_502_when_knowledge_embedding_fails(
     client: TestClient,

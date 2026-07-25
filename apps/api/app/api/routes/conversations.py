@@ -101,6 +101,8 @@ def send_message(
     return AgentJobResponse(job_id=job.id, status=job.status.value, user_message=_message_response(user_message))
 
 
+# EXPERIMENTAL/UNUSED-BY-DEFAULT: Synchronous SSE chat endpoint.
+# Reintroducing this as default can block the FastAPI event loop for concurrent users.
 @router.post(
     "/{conversation_id}/messages/stream",
     dependencies=[Depends(rate_limit_by_user("chat_message_stream", limit=30, window_seconds=60))],
@@ -200,6 +202,10 @@ def get_message_job(
             role=job.result["role"],
             content=job.result["content"],
             tool_name=job.result.get("tool_name"),
+            tool_output=job.result.get("tool_output"),
+            agent_name=job.result.get("agent_name"),
+            tool_arguments=job.result.get("tool_arguments"),
+            thought_process=job.result.get("thought_process"),
             created_at=job.result["created_at"],
         )
     return AgentJobStatusResponse(
@@ -253,10 +259,20 @@ def _conversation_response(conversation: Conversation) -> ConversationResponse:
 
 
 def _message_response(message: Message) -> MessageResponse:
+    import json
+    tool_args = None
+    if message.tool_arguments:
+        try:
+            tool_args = json.loads(message.tool_arguments)
+        except Exception:
+            tool_args = {"raw": message.tool_arguments}
     return MessageResponse(
         id=message.id,
         role=message.role,
         content=message.content,
         tool_name=message.tool_name,
+        tool_output=message.tool_output,
+        agent_name=message.agent_name,
+        tool_arguments=tool_args,
         created_at=message.created_at,
     )

@@ -13,6 +13,7 @@ import { createApiClient } from "../lib/api-client";
 import { useAuth } from "./auth-context";
 import { useUi } from "./ui-context";
 import { useApiKeys } from "./api-keys-context";
+import { pollJob } from "../hooks/use-job-poller";
 import toast from "react-hot-toast";
 
 export type Conversation = {
@@ -35,6 +36,10 @@ export type Message = {
   role: string;
   content: string;
   tool_name: string | null;
+  tool_output?: string | null;
+  agent_name?: string | null;
+  tool_arguments?: Record<string, any> | null;
+  thought_process?: string | null;
   created_at: string;
   execution_steps?: ExecutionStep[];
 };
@@ -87,12 +92,6 @@ type ConversationContextType = {
   editingTitle: string;
   setEditingTitle: (title: string) => void;
   conversationGroups: [string, Conversation[]][];
-  streamingThought: string;
-  streamingDelta: string;
-  streamingStatus: string;
-  streamingTool: string;
-  streamingAgent: string;
-  isStreamingActive: boolean;
   loadConversations: (authToken?: string) => Promise<void>;
   loadMessages: (authToken: string | undefined, conversationId: string) => Promise<void>;
   createConversation: () => Promise<Conversation | null>;
@@ -120,13 +119,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
-  // Live SSE Streaming States
-  const [streamingThought, setStreamingThought] = useState("");
-  const [streamingDelta, setStreamingDelta] = useState("");
-  const [streamingStatus, setStreamingStatus] = useState("");
-  const [streamingTool, setStreamingTool] = useState("");
-  const [streamingAgent, setStreamingAgent] = useState("");
-  const [isStreamingActive, setIsStreamingActive] = useState(false);
+
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -198,7 +191,56 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
       } else {
         data = await api<Message[]>(`/conversations/${conversationId}/messages`);
       }
-      setMessages(data);
+
+      const processedData = data.map((msg) => {
+        if (msg.role === "assistant" && msg.tool_name && !msg.execution_steps) {
+          const timestamp = msg.created_at || new Date().toISOString();
+          const steps: ExecutionStep[] = [
+            {
+              step: "planner",
+              label: "Planner analyzed prompt",
+              status: "completed",
+              timestamp,
+            },
+          ];
+
+          if (msg.agent_name) {
+            steps.push({
+              step: "specialist",
+              label: `Routed to ${msg.agent_name.charAt(0).toUpperCase() + msg.agent_name.slice(1)} Agent`,
+              status: "completed",
+              timestamp,
+              metadata: { agent_name: msg.agent_name },
+            });
+          }
+
+          steps.push({
+            step: "tool",
+            label: `Executed tool \`${msg.tool_name}\``,
+            status: "completed",
+            timestamp,
+            metadata: {
+              tool_name: msg.tool_name,
+              tool_output: msg.tool_output,
+            },
+          });
+
+          steps.push({
+            step: "finalize",
+            label: "Finalized response",
+            status: "completed",
+            timestamp,
+          });
+
+          return {
+            ...msg,
+            execution_steps: steps,
+          };
+        }
+        return msg;
+      });
+
+      setMessages(processedData);
     } catch (error) {
       console.error("Error loading messages:", error);
     }
@@ -307,99 +349,167 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         },
       ]);
 
-      // Connect to SSE stream
-      const response = await fetch(`${API_URL}/conversations/${targetId}/messages/stream`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ content: content.trim() }),
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`Streaming failed with status ${response.status}`);
-      }
-
-      setIsStreamingActive(true);
-      setStreamingThought("");
-      setStreamingDelta("");
-      setStreamingStatus("Planner analyzing prompt...");
-      setStreamingTool("");
-      setStreamingAgent("");
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
-      let currentEvent = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("event: ")) {
-            currentEvent = trimmed.slice(7).trim();
-          } else if (trimmed.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(trimmed.slice(6));
-              if (currentEvent === "thinking") {
-                setStreamingStatus(data.status ?? "Thinking...");
-              } else if (currentEvent === "thought") {
-                setStreamingThought(data.thought ?? "");
-              } else if (currentEvent === "agent_route") {
-                setStreamingAgent(data.agent_name ?? "");
-              } else if (currentEvent === "tool_start") {
-                setStreamingTool(data.tool_name ?? "");
-              } else if (currentEvent === "token") {
-                setStreamingDelta((prev) => prev + (data.delta ?? ""));
-              } else if (currentEvent === "done") {
-                setMessages((current) => [
-                  ...current.filter((m) => m.id !== userMsgId),
-                  {
-                    id: `user-${Date.now()}`,
-                    role: "user",
-                    content: content.trim(),
-                    tool_name: null,
-                    created_at: new Date().toISOString(),
-                  },
-                  {
-                    id: data.message_id,
-                    role: data.role ?? "assistant",
-                    content: data.content,
-                    tool_name: data.tool_name ?? null,
-                    created_at: new Date().toISOString(),
-                  },
-                ]);
-                setIsStreamingActive(false);
-                setIsSending(false);
-                setStatus("Ready");
-                setStreamingThought("");
-                setStreamingDelta("");
-                setStreamingTool("");
-                setStreamingAgent("");
-                void loadConversations();
-              } else if (currentEvent === "error") {
-                toast.error(data.error ?? "Streaming error");
-                setIsStreamingActive(false);
-                setIsSending(false);
-              }
-            } catch (err) {
-              console.error("SSE parse error:", err);
-            }
-          }
+      // Post message and retrieve job details
+      const response = await api<{ job_id: string; status: string; user_message: Message }>(
+        `/conversations/${targetId}/messages`,
+        {
+          method: "POST",
+          body: JSON.stringify({ content: content.trim() }),
         }
-      }
+      );
+
+      const jobId = response.job_id;
+
+      // Optimistically add user message returned from backend
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== userMsgId),
+        response.user_message,
+      ]);
+
+      setCurrentExecutionSteps([]);
+
+      // Start polling the job until completed
+      pollJob<{
+        id: string;
+        role: string;
+        content: string;
+        tool_name: string | null;
+        tool_output?: string | null;
+        agent_name?: string | null;
+        tool_arguments?: Record<string, any> | null;
+        thought_process?: string | null;
+        created_at: string;
+      }>(
+        async () => {
+          const job = await api<{
+            job_id: string;
+            status: string;
+            assistant_message: {
+              id: string;
+              role: string;
+              content: string;
+              tool_name: string | null;
+              tool_output?: string | null;
+              agent_name?: string | null;
+              tool_arguments?: Record<string, any> | null;
+              thought_process?: string | null;
+              created_at: string;
+            } | null;
+            execution_steps: ExecutionStep[] | null;
+            error: string | null;
+          }>(`/conversations/${targetId}/messages/jobs/${jobId}`);
+
+          const succeeded = job.status === "succeeded";
+          const failed = job.status === "failed";
+
+          if (job.status === "queued") {
+            setStatus("Queued...");
+          } else if (job.status === "running") {
+            setStatus("Orchestrating agents...");
+          }
+
+          if (job.execution_steps) {
+            setCurrentExecutionSteps(job.execution_steps);
+          }
+
+          return {
+            status: job.status,
+            succeeded,
+            failed,
+            data: job.assistant_message ?? undefined,
+            error: job.error ?? undefined,
+          };
+        },
+        {
+          intervalMs: 1500,
+          timeoutMs: 120000,
+          onTimeout: () => {
+            setStatus("Request timed out");
+            setIsSending(false);
+          },
+          onSucceeded: (result) => {
+            let finalSteps: ExecutionStep[] = [];
+            if (result) {
+              const timestamp = result.created_at || new Date().toISOString();
+
+              finalSteps.push({
+                step: "planner",
+                label: "Planner analyzed prompt",
+                status: "completed",
+                timestamp,
+              });
+
+              if (result.thought_process) {
+                finalSteps.push({
+                  step: "thinking",
+                  label: "Model Reasoning",
+                  status: "completed",
+                  timestamp,
+                  metadata: { thought: result.thought_process },
+                });
+              }
+
+              if (result.agent_name) {
+                finalSteps.push({
+                  step: "specialist",
+                  label: `Routed to ${result.agent_name.charAt(0).toUpperCase() + result.agent_name.slice(1)} Agent`,
+                  status: "completed",
+                  timestamp,
+                  metadata: { agent_name: result.agent_name },
+                });
+              }
+
+              if (result.tool_name) {
+                finalSteps.push({
+                  step: "tool",
+                  label: `Executed tool \`${result.tool_name}\``,
+                  status: "completed",
+                  timestamp,
+                  metadata: {
+                    tool_name: result.tool_name,
+                    tool_arguments: result.tool_arguments,
+                    tool_output: result.tool_output,
+                  },
+                });
+              }
+
+              finalSteps.push({
+                step: "finalize",
+                label: "Finalized response",
+                status: "completed",
+                timestamp,
+              });
+
+              setCurrentExecutionSteps(finalSteps);
+
+              setMessages((current) => [
+                ...current,
+                {
+                  id: result.id,
+                  role: result.role,
+                  content: result.content,
+                  tool_name: result.tool_name,
+                  tool_output: result.tool_output,
+                  created_at: result.created_at,
+                  execution_steps: finalSteps,
+                },
+              ]);
+            }
+            setIsSending(false);
+            setStatus("Ready");
+            void loadConversations();
+          },
+          onFailed: (error) => {
+            setStatus(`Failed: ${error}`);
+            toast.error(`Request failed: ${error}`);
+            setIsSending(false);
+          },
+        }
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Streaming failed";
+      const message = error instanceof Error ? error.message : "Request failed";
       setStatus(message);
       toast.error(`Error: ${message}`);
-      setIsStreamingActive(false);
       setIsSending(false);
     }
   };
@@ -419,12 +529,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         editingTitle,
         setEditingTitle,
         conversationGroups,
-        streamingThought,
-        streamingDelta,
-        streamingStatus,
-        streamingTool,
-        streamingAgent,
-        isStreamingActive,
+
         loadConversations,
         loadMessages,
         createConversation,

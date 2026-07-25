@@ -10,7 +10,7 @@ class GithubInspectorTool:
     parameters = {
         "type": "object",
         "properties": {
-            "owner": {"type": "string", "description": "Repository owner or organization name (e.g. 'Nikhil2005Rai')."},
+            "owner": {"type": "string", "description": "Repository owner or organization name (e.g. 'octocat')."},
             "repo": {"type": "string", "description": "Repository name (e.g. 'Archimedes')."},
             "action": {
                 "type": "string",

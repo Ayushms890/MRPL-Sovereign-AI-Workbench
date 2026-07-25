@@ -109,6 +109,9 @@ class ConversationRepository:
 
     @staticmethod
     def _message_to_entity(message: MessageModel) -> Message:
+        tool_output = message.tool_calls[0].output if message.tool_calls else None
+        agent_name = message.tool_calls[0].agent_name if message.tool_calls else None
+        tool_arguments = message.tool_calls[0].arguments if message.tool_calls else None
         return Message(
             id=message.id,
             conversation_id=message.conversation_id,
@@ -116,4 +119,7 @@ class ConversationRepository:
             content=message.content,
             tool_name=message.tool_name,
             created_at=message.created_at,
+            tool_output=tool_output,
+            agent_name=agent_name,
+            tool_arguments=tool_arguments,
         )

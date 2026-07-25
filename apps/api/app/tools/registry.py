@@ -1,3 +1,4 @@
+from sqlalchemy.orm import Session
 from app.providers.base import ToolSchema
 from app.tools.base import Tool
 from app.tools.chart_generator import ChartGeneratorTool
@@ -26,7 +27,7 @@ class ToolRegistry:
         ]
 
 
-def build_tool_registry() -> ToolRegistry:
+def build_tool_registry(session: Session | None = None) -> ToolRegistry:
     return ToolRegistry(
         tools=[
             CurrentTimeTool(),
@@ -35,6 +36,6 @@ def build_tool_registry() -> ToolRegistry:
             WebReaderTool(),
             ChartGeneratorTool(),
             GithubInspectorTool(),
-            DbInspectorTool(),
+            DbInspectorTool(session=session),
         ]
     )

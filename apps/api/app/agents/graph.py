@@ -146,21 +146,32 @@ class MultiAgentGraph(PlannerAgent):
                 thought = t_match.group(1).strip()
             content = re.sub(r"<thought>.*?</thought>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
 
-        content_lower = content.lower()
-        if "route: coding, research" in content_lower or "route: research, coding" in content_lower or ("coding" in content_lower and "research" in content_lower and "route:" in content_lower):
-            return {"route": "multi", "thought_process": thought}
-        if "route: data_analyst" in content_lower or "data_analyst" in content_lower and "route:" in content_lower:
-            return {"route": "data_analyst", "thought_process": thought}
-        if "route: security_auditor" in content_lower or "security" in content_lower and "route:" in content_lower:
-            return {"route": "security_auditor", "thought_process": thought}
-        if "route: devops" in content_lower or "devops" in content_lower and "route:" in content_lower:
-            return {"route": "devops", "thought_process": thought}
-        if "route: coding" in content_lower:
-            return {"route": "coding", "thought_process": thought}
-        if "route: knowledge" in content_lower:
-            return {"route": "knowledge", "thought_process": thought}
-        if "route: research" in content_lower:
-            return {"route": "research", "thought_process": thought}
+        content_lower = content.lower().strip()
+        route = "end"
+        if "route:" in content_lower:
+            idx = content_lower.find("route:")
+            route_part = content_lower[idx + 6:].strip()
+            route_part = route_part.split("\n")[0].strip()
+            route_part = route_part.rstrip(".!?,")
+
+            if "coding" in route_part and "research" in route_part:
+                route = "multi"
+            elif "data_analyst" in route_part:
+                route = "data_analyst"
+            elif "security_auditor" in route_part:
+                route = "security_auditor"
+            elif "devops" in route_part:
+                route = "devops"
+            elif "coding" in route_part:
+                route = "coding"
+            elif "knowledge" in route_part:
+                route = "knowledge"
+            elif "research" in route_part:
+                route = "research"
+
+        if route != "end":
+            return {"route": route, "thought_process": thought}
+
         if content_lower.startswith("answer:"):
             content = content.split(":", 1)[1].strip()
 

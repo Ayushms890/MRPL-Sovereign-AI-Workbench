@@ -10,7 +10,8 @@ Your responsibility is to analyze data queries, process CSV/JSON datasets, write
 If the user asks to visualize data or plot statistics, invoke the `chart_generator` tool.
 If the user asks about database schemas or index optimizations, invoke the `db_inspector` tool.
 
-Always be precise, structured, and output clear analytical insights."""
+CRITICAL INSTRUCTION FOR CHARTS:
+When the `chart_generator` tool is invoked, YOU MUST ALWAYS INCLUDE THE ENTIRE ````json:chart ... ```` CODE BLOCK FROM THE TOOL RESULT AT THE BEGINNING OF YOUR RESPONSE SO THE FRONTEND CAN RENDER THE INTERACTIVE GRAPH."""
 
 @dataclass(slots=True)
 class DataAnalystResult:
@@ -44,11 +45,23 @@ class DataAnalystAgent:
                 follow_up_messages = [
                     *messages,
                     LLMMessage(role="assistant", content=f"Tool call: {response.tool_call.name}"),
-                    LLMMessage(role="user", content=f"Tool result: {tool_result.content}"),
+                    LLMMessage(
+                        role="user",
+                        content=(
+                            f"Tool result: {tool_result.content}\n\n"
+                            "IMPORTANT: You MUST include any ```json:chart ... ``` code block from the tool result in your final answer so the interactive chart is rendered."
+                        ),
+                    ),
                 ]
                 final_response = self.llm_provider.generate(messages=follow_up_messages)
+                
+                final_answer = final_response.content
+                # Fail-safe: If the LLM omitted the ```json:chart block, prepend it automatically
+                if "```json:chart" in tool_result.content and "```json:chart" not in final_answer:
+                    final_answer = f"{tool_result.content}\n\n{final_answer}"
+
                 return DataAnalystResult(
-                    answer=final_response.content,
+                    answer=final_answer,
                     tool_name=response.tool_call.name,
                     tool_arguments=response.tool_call.arguments,
                     tool_output=tool_result.content,

@@ -73,7 +73,7 @@ def run_chat_agent_job(payload: dict) -> dict:
 
         agent = MultiAgentGraph(
             llm_provider=llm_provider,
-            tools=build_tool_registry(),
+            tools=build_tool_registry(session),
             agents=build_agent_registry(),
             embedding_provider=embedding_provider,
             retrieval_repository=RetrievalRepository(session),
@@ -184,7 +184,11 @@ def run_chat_agent_job(payload: dict) -> dict:
             "role": assistant_message.role,
             "content": assistant_message.content,
             "tool_name": assistant_message.tool_name,
+            "tool_output": assistant_message.tool_output,
             "created_at": assistant_message.created_at.isoformat(),
+            "agent_name": result.agent_name,
+            "tool_arguments": result.tool_arguments,
+            "thought_process": result.thought_process,
         }
     finally:
         session.close()

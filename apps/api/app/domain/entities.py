@@ -31,6 +31,10 @@ class Message:
     content: str
     tool_name: str | None
     created_at: datetime
+    tool_output: str | None = None
+    agent_name: str | None = None
+    tool_arguments: str | None = None
+    thought_process: str | None = None
 
 
 @dataclass(slots=True)

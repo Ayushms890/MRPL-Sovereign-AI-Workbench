@@ -48,12 +48,12 @@ def test_github_inspector_tool():
     assert "Error:" in res
 
 
-def test_db_inspector_tool():
-    tool = DbInspectorTool()
+def test_db_inspector_tool(db_session):
+    tool = DbInspectorTool(session=db_session)
     assert tool.name == "db_inspector"
     res = tool.run({"action": "list_tables"})
-    assert "users" in res
-    assert "conversations" in res
+    assert "user" in res.lower()
+    assert "conversations" in res.lower()
 
 
 def test_tool_registry_includes_new_tools():
@@ -83,3 +83,62 @@ def test_new_agents():
     devops = registry.build("devops", ctx)
     res3 = devops.run("Generate Dockerfile")
     assert res3.agent_name == "devops"
+
+
+class ScriptedLLMProvider(FakeLLMProvider):
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        self.responses = responses
+        self.calls = []
+
+    def generate(self, messages: list[LLMMessage], tools=None) -> LLMResponse:
+        self.calls.append(messages)
+        return self.responses.pop(0)
+
+
+def test_new_agents_prompt_safety():
+    first_resp = LLMResponse(
+        content="",
+        tool_call=LLMToolCall(
+            name="github_inspector",
+            arguments={"owner": "octocat", "repo": "hello", "action": "list_files"},
+        ),
+    )
+    final_resp = LLMResponse(content="Final agent answer")
+
+    llm_devops = ScriptedLLMProvider([first_resp, final_resp])
+    tools = build_tool_registry()
+    ctx = AgentBuildContext(llm_provider=llm_devops, tools=tools)
+    registry = build_agent_registry()
+    devops_agent = registry.build("devops", ctx)
+    
+    github_tool = tools.get("github_inspector")
+    github_tool.run = lambda args: "Mocked GitHub Files List"
+
+    res = devops_agent.run("Audit my devops pipeline")
+    assert res.answer == "Final agent answer"
+    assert len(llm_devops.calls) == 2
+    follow_up_user_msg = llm_devops.calls[1][-1].content
+    assert "<tool_output>" in follow_up_user_msg
+    assert "</tool_output>" in follow_up_user_msg
+    assert "Mocked GitHub Files List" in follow_up_user_msg
+
+    first_resp_sec = LLMResponse(
+        content="",
+        tool_call=LLMToolCall(
+            name="github_inspector",
+            arguments={"owner": "octocat", "repo": "hello", "action": "list_files"},
+        ),
+    )
+    final_resp_sec = LLMResponse(content="Final security answer")
+
+    llm_security = ScriptedLLMProvider([first_resp_sec, final_resp_sec])
+    ctx_sec = AgentBuildContext(llm_provider=llm_security, tools=tools)
+    security_agent = registry.build("security_auditor", ctx_sec)
+
+    res_sec = security_agent.run("Audit code security")
+    assert res_sec.answer == "Final security answer"
+    assert len(llm_security.calls) == 2
+    follow_up_user_msg_sec = llm_security.calls[1][-1].content
+    assert "<tool_output>" in follow_up_user_msg_sec
+    assert "</tool_output>" in follow_up_user_msg_sec
+    assert "Mocked GitHub Files List" in follow_up_user_msg_sec

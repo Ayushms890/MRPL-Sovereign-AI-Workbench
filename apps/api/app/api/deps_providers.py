@@ -94,8 +94,10 @@ def get_redis_cache() -> RedisCache | None:
     return build_redis_cache()
 
 
-def get_tool_registry() -> ToolRegistry:
-    return build_tool_registry()
+def get_tool_registry(
+    session: Annotated[Session, Depends(get_db_session)],
+) -> ToolRegistry:
+    return build_tool_registry(session)
 
 
 def get_agent_registry() -> AgentRegistry:

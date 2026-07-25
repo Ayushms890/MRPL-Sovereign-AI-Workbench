@@ -7,7 +7,6 @@ import { User, Bot, Wrench, Copy, ThumbsUp, ThumbsDown, Share2, PanelRightOpen }
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ExecutionTrace } from "../../components/execution-trace";
-import { StreamingThoughtAccordion } from "../../components/streaming-thought-accordion";
 import { MermaidDiagram } from "../../components/mermaid-diagram";
 import { SpeechPlayer } from "../../components/voice-input";
 import { ArtifactDrawer } from "../../components/artifact-drawer";
@@ -27,12 +26,6 @@ export default function ChatSessionPage() {
     conversations,
     isSending,
     currentExecutionSteps,
-    streamingThought,
-    streamingDelta,
-    streamingStatus,
-    streamingTool,
-    streamingAgent,
-    isStreamingActive,
     setActiveConversationId,
     loadMessages,
   } = useChat();
@@ -122,6 +115,11 @@ export default function ChatSessionPage() {
 
                 <article className="message-bubble">
                   <span>{isUser ? "You" : "Archimedes"}</span>
+                  
+                  {!isUser && message.tool_name === "chart_generator" && message.tool_output && !message.content.includes('"chart_type"') && (
+                    <ChartRenderer jsonContent={message.tool_output} />
+                  )}
+
                   <div className="message-markdown">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={renderMarkdownComponents}>
                       {message.content}
@@ -166,8 +164,8 @@ export default function ChatSessionPage() {
           );
         })}
 
-        {/* Live SSE Streaming Thought & Token Response */}
-        {isStreamingActive && (
+        {/* Live Job Execution Steps Trace */}
+        {isSending && (
           <div className="message-group assistant-group pending-group">
             <div
               className="message-avatar assistant-avatar"
@@ -176,36 +174,18 @@ export default function ChatSessionPage() {
               <Bot size={16} />
             </div>
             <div className="message-bubble-wrapper" style={{ width: "100%" }}>
-              <StreamingThoughtAccordion
-                thoughtText={streamingThought}
-                isThinking={!streamingDelta}
-                statusText={streamingStatus}
-                toolName={streamingTool}
-                agentName={streamingAgent}
-                isStreamingDone={!isStreamingActive}
-              />
-
-              {streamingDelta ? (
-                <article className="message-bubble">
-                  <span>Archimedes</span>
-                  <div className="message-markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={renderMarkdownComponents}>
-                      {streamingDelta}
-                    </ReactMarkdown>
-                  </div>
-                </article>
+              {currentExecutionSteps.length > 0 ? (
+                <ExecutionTrace steps={currentExecutionSteps} isPending={true} />
               ) : (
-                !streamingThought && (
-                  <article className="message-bubble pending-bubble">
-                    <span>Archimedes</span>
-                    <div className="typing-indicator">
-                      <span></span>
-                      <span></span>
-                      <span></span>
-                    </div>
-                    <p className="pending-text">{streamingStatus || "Planner is reasoning..."}</p>
-                  </article>
-                )
+                <article className="message-bubble pending-bubble">
+                  <span>Archimedes</span>
+                  <div className="typing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <p className="pending-text">Planner is reasoning...</p>
+                </article>
               )}
             </div>
           </div>
