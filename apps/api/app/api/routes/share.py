@@ -125,6 +125,22 @@ def import_shared_conversation(
     if not raw_data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shared chat not found or expired")
 
+    # Prevent duplicate imports by caching the imported conversation id
+    import_cache_key = f"user_imported:{current_user.id}:{share_id}"
+    try:
+        existing_conv_id = cache.client.get(import_cache_key)
+        if existing_conv_id:
+            existing_conv = repo.get_for_user(existing_conv_id, current_user.id)
+            if existing_conv:
+                return ConversationResponse(
+                    id=existing_conv.id,
+                    title=existing_conv.title,
+                    created_at=existing_conv.created_at,
+                    updated_at=existing_conv.updated_at,
+                )
+    except Exception:
+        logger.warning("Failed to lookup existing import mapping from cache")
+
     try:
         data = json.loads(raw_data)
     except Exception as exc:
@@ -135,7 +151,8 @@ def import_shared_conversation(
     new_conv = repo.create(user_id=current_user.id, title=data["title"])
 
     # 3. Copy all messages and their tool calls
-    tool_repo = ToolCallRepository(repo.session)
+    db_session = getattr(repo, "session", None) or getattr(repo, "inner").session
+    tool_repo = ToolCallRepository(db_session)
     for msg in data["messages"]:
         new_msg = repo.add_message(
             conversation_id=new_conv.id,
@@ -153,6 +170,11 @@ def import_shared_conversation(
                 arguments=args_str,
                 output=msg.get("tool_output") or "",
             )
+
+    try:
+        cache.client.set(import_cache_key, new_conv.id)
+    except Exception:
+        logger.warning("Failed to store import mapping in cache")
 
     return ConversationResponse(
         id=new_conv.id,
