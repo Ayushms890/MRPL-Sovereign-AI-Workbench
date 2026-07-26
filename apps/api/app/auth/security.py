@@ -8,9 +8,9 @@ import jwt
 from app.core.config import settings
 
 
-if not settings.jwt_secret:
+if not settings.jwt_secret or len(settings.jwt_secret) < 32:
     raise RuntimeError(
-        "JWT_SECRET is required. Generate one with: "
+        "JWT_SECRET must be at least 32 characters long for SHA256 security. Generate one with: "
         "python -c \"import secrets; print(secrets.token_urlsafe(64))\" "
         "and set it in apps/api/.env"
     )

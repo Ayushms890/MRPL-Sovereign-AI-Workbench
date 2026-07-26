@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, FormEvent } from "react";
 import { createApiClient } from "../lib/api-client";
 import { useAuth } from "./auth-context";
+import { useWorkspace } from "./workspace-context";
 import { useApiKeys } from "./api-keys-context";
 import { useUi } from "./ui-context";
 import { pollJob } from "../hooks/use-job-poller";
@@ -35,6 +36,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export const DocumentsProvider = ({ children }: { children: React.ReactNode }) => {
   const { getToken, isAuthenticated } = useAuth();
+  const { activeWorkspaceId } = useWorkspace();
   const { configuredProviders } = useApiKeys();
   const { setIsApiKeyWarningOpen } = useUi();
 
@@ -45,16 +47,17 @@ export const DocumentsProvider = ({ children }: { children: React.ReactNode }) =
   const [isUploadingDocument, setIsUploadingDocument] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && activeWorkspaceId) {
       void loadDocuments();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, activeWorkspaceId]);
 
   async function loadDocuments(authToken?: string) {
+    if (!activeWorkspaceId) return;
     try {
       const bearerToken = authToken ?? (await getToken());
       if (!bearerToken) return;
-      const response = await fetch(`${API_URL}/documents`, {
+      const response = await fetch(`${API_URL}/documents?workspace_id=${activeWorkspaceId}`, {
         headers: { Authorization: `Bearer ${bearerToken}` },
       });
       if (response.ok) {
@@ -78,6 +81,10 @@ export const DocumentsProvider = ({ children }: { children: React.ReactNode }) =
 
   async function uploadDocument(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!activeWorkspaceId) {
+      toast.error("No active workspace selected");
+      return;
+    }
     if (configuredProviders.length === 0) {
       setIsApiKeyWarningOpen(true);
       return;
@@ -92,7 +99,7 @@ export const DocumentsProvider = ({ children }: { children: React.ReactNode }) =
     setDocumentStatus("Queued");
 
     try {
-      const response = await api<{ job_id: string; status: string }>("/documents", {
+      const response = await api<{ job_id: string; status: string }>(`/documents?workspace_id=${activeWorkspaceId}`, {
         method: "POST",
         body: JSON.stringify({ title: documentTitle.trim(), content: documentContent.trim() }),
       });

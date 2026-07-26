@@ -18,11 +18,17 @@ class DocumentRepository:
         source_type: str,
         chunks: list[str],
         embeddings: list[list[float]],
+        workspace_id: str | None = None,
     ) -> Document:
         if len(chunks) != len(embeddings):
             raise ValueError("chunks and embeddings must have the same length")
 
-        document = DocumentModel(user_id=user_id, title=title, source_type=source_type)
+        document = DocumentModel(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            title=title,
+            source_type=source_type,
+        )
         self.session.add(document)
         self.session.flush()
         for index, (content, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
@@ -39,10 +45,27 @@ class DocumentRepository:
         return Document(
             id=document.id,
             user_id=document.user_id,
+            workspace_id=document.workspace_id,
             title=document.title,
             source_type=document.source_type,
             created_at=document.created_at,
         )
+
+    def list_for_workspace(self, workspace_id: str) -> list[Document]:
+        documents = self.session.scalars(
+            select(DocumentModel).where(DocumentModel.workspace_id == workspace_id).order_by(DocumentModel.created_at.desc())
+        ).all()
+        return [
+            Document(
+                id=doc.id,
+                user_id=doc.user_id,
+                workspace_id=doc.workspace_id,
+                title=doc.title,
+                source_type=doc.source_type,
+                created_at=doc.created_at,
+            )
+            for doc in documents
+        ]
 
     def list_for_user(self, user_id: str) -> list[Document]:
         documents = self.session.scalars(
@@ -52,6 +75,7 @@ class DocumentRepository:
             Document(
                 id=doc.id,
                 user_id=doc.user_id,
+                workspace_id=doc.workspace_id,
                 title=doc.title,
                 source_type=doc.source_type,
                 created_at=doc.created_at,
@@ -59,17 +83,63 @@ class DocumentRepository:
             for doc in documents
         ]
 
+    def get_by_id(self, document_id: str) -> Document | None:
+        doc = self.session.get(DocumentModel, document_id)
+        if not doc:
+            return None
+        return Document(
+            id=doc.id,
+            user_id=doc.user_id,
+            workspace_id=doc.workspace_id,
+            title=doc.title,
+            source_type=doc.source_type,
+            created_at=doc.created_at,
+        )
+
+    def delete(self, document_id: str) -> bool:
+        doc = self.session.get(DocumentModel, document_id)
+        if not doc:
+            return False
+        self.session.delete(doc)
+        self.session.commit()
+        return True
+
 
 class RetrievalRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def search(self, user_id: str, embedding: list[float], limit: int = 4) -> list[RetrievedChunk]:
+    def get_document(self, document_id: str) -> Document | None:
+        doc = self.session.get(DocumentModel, document_id)
+        if not doc:
+            return None
+        return Document(
+            id=doc.id,
+            user_id=doc.user_id,
+            workspace_id=doc.workspace_id,
+            title=doc.title,
+            source_type=doc.source_type,
+            created_at=doc.created_at,
+        )
+
+    def search(
+        self,
+        user_id: str,
+        embedding: list[float],
+        limit: int = 4,
+        workspace_id: str | None = None,
+    ) -> list[RetrievedChunk]:
+        stmt_where = (
+            (DocumentModel.workspace_id == workspace_id)
+            if workspace_id
+            else (DocumentModel.user_id == user_id)
+        )
+
         if self.session.bind and self.session.bind.dialect.name == "sqlite":
             chunks = self.session.scalars(
                 select(DocumentChunkModel)
                 .join(DocumentModel, DocumentChunkModel.document_id == DocumentModel.id)
-                .where(DocumentModel.user_id == user_id)
+                .where(stmt_where)
                 .limit(limit)
             ).all()
             return [
@@ -86,7 +156,7 @@ class RetrievalRepository:
         rows = self.session.execute(
             select(DocumentChunkModel, distance)
             .join(DocumentModel, DocumentChunkModel.document_id == DocumentModel.id)
-            .where(DocumentModel.user_id == user_id)
+            .where(stmt_where)
             .order_by(distance)
             .limit(limit)
         ).all()

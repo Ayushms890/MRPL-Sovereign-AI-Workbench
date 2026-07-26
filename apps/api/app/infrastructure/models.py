@@ -29,8 +29,54 @@ class UserModel(Base):
     conversations: Mapped[list["ConversationModel"]] = relationship(back_populates="user")
     api_keys: Mapped[list["UserApiKeyModel"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     documents: Mapped[list["DocumentModel"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    workspaces_owned: Mapped[list["WorkspaceModel"]] = relationship(back_populates="owner")
+    memberships: Mapped[list["WorkspaceMemberModel"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+class WorkspaceModel(Base):
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    owner: Mapped[UserModel] = relationship(back_populates="workspaces_owned")
+    members: Mapped[list["WorkspaceMemberModel"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+    invites: Mapped[list["WorkspaceInviteModel"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+    conversations: Mapped[list["ConversationModel"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+    documents: Mapped[list["DocumentModel"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+
+
+class WorkspaceMemberModel(Base):
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "user_id", name="uq_workspace_members_workspace_user"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=lambda: str(uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    workspace: Mapped[WorkspaceModel] = relationship(back_populates="members")
+    user: Mapped[UserModel] = relationship(back_populates="memberships")
+
+
+class WorkspaceInviteModel(Base):
+    __tablename__ = "workspace_invites"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=lambda: str(uuid4()))
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    token: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    invited_by: Mapped[str] = mapped_column(ForeignKey("user.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    workspace: Mapped[WorkspaceModel] = relationship(back_populates="invites")
+    inviter: Mapped[UserModel] = relationship()
 
 
 class ConversationModel(Base):
@@ -38,6 +84,7 @@ class ConversationModel(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=True)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -45,6 +92,7 @@ class ConversationModel(Base):
     )
 
     user: Mapped[UserModel] = relationship(back_populates="conversations")
+    workspace: Mapped[WorkspaceModel | None] = relationship(back_populates="conversations")
     messages: Mapped[list["MessageModel"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan", order_by="MessageModel.created_at"
     )
@@ -57,12 +105,14 @@ class MessageModel(Base):
     conversation_id: Mapped[str] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("user.id", ondelete="SET NULL"), index=True, nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tool_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     conversation: Mapped[ConversationModel] = relationship(back_populates="messages")
+    user: Mapped[UserModel | None] = relationship()
     tool_calls: Mapped[list["ToolCallModel"]] = relationship(back_populates="message", cascade="all, delete-orphan")
 
 
@@ -102,11 +152,13 @@ class DocumentModel(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     source_type: Mapped[str] = mapped_column(String(80), nullable=False, default="pasted_text")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     user: Mapped[UserModel] = relationship(back_populates="documents")
+    workspace: Mapped[WorkspaceModel | None] = relationship(back_populates="documents")
     chunks: Mapped[list["DocumentChunkModel"]] = relationship(
         back_populates="document", cascade="all, delete-orphan", order_by="DocumentChunkModel.chunk_index"
     )

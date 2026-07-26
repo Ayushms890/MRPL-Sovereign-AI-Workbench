@@ -20,17 +20,23 @@ class CachingConversationRepository:
     def list_for_user(self, user_id: str) -> list[Conversation]:
         return self.inner.list_for_user(user_id)
 
+    def list_for_workspace(self, workspace_id: str) -> list[Conversation]:
+        return self.inner.list_for_workspace(workspace_id)
+
+    def get_by_id(self, conversation_id: str) -> Conversation | None:
+        return self.inner.get_by_id(conversation_id)
+
     def get_for_user(self, conversation_id: str, user_id: str) -> Conversation | None:
         return self.inner.get_for_user(conversation_id=conversation_id, user_id=user_id)
 
-    def create(self, user_id: str, title: str) -> Conversation:
-        return self.inner.create(user_id=user_id, title=title)
+    def create(self, user_id: str, title: str, workspace_id: str | None = None) -> Conversation:
+        return self.inner.create(user_id=user_id, title=title, workspace_id=workspace_id)
 
-    def delete(self, conversation_id: str, user_id: str) -> bool:
+    def delete(self, conversation_id: str, user_id: str | None = None) -> bool:
         return self.inner.delete(conversation_id=conversation_id, user_id=user_id)
 
-    def update_title(self, conversation_id: str, user_id: str, title: str) -> Conversation | None:
-        return self.inner.update_title(conversation_id=conversation_id, user_id=user_id, title=title)
+    def update_title(self, conversation_id: str, title: str, user_id: str | None = None) -> Conversation | None:
+        return self.inner.update_title(conversation_id=conversation_id, title=title, user_id=user_id)
 
     def list_messages(self, conversation_id: str) -> list[Message]:
         cache_key = self._messages_key(conversation_id)

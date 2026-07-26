@@ -60,6 +60,9 @@ class MessageResponse(BaseModel):
     agent_name: str | None = None
     tool_arguments: dict | None = None
     thought_process: str | None = None
+    user_id: str | None = None
+    user_name: str | None = None
+    user_email: str | None = None
 
 
 class AgentMessageResponse(BaseModel):
@@ -128,3 +131,56 @@ class ShareCreateResponse(BaseModel):
 class ShareSnapshotResponse(BaseModel):
     title: str
     messages: list[MessageResponse]
+
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+
+
+class WorkspaceResponse(BaseModel):
+    id: str
+    name: str
+    owner_id: str
+    created_at: datetime
+    my_role: str | None = None
+
+
+class WorkspaceMemberResponse(BaseModel):
+    user_id: str
+    email: str
+    name: str
+    role: str
+    joined_at: datetime
+
+
+class WorkspaceMemberUpdateRequest(BaseModel):
+    role: str = Field(pattern="^(owner|member|viewer)$")
+
+
+class WorkspaceInviteRequest(BaseModel):
+    email: EmailStr
+    role: str = Field(pattern="^(member|viewer)$")
+
+
+class WorkspaceInviteResponse(BaseModel):
+    id: str
+    workspace_id: str
+    email: str
+    role: str
+    token: str
+    status: str
+    expires_at: datetime
+    created_at: datetime
+
+
+class WorkspaceInviteDetailsResponse(BaseModel):
+    token: str
+    workspace_id: str
+    workspace_name: str
+    invited_email: str
+    role: str
+    status: str
+    already_member: bool = False
+    user_role: str | None = None
+    is_owner: bool = False
+

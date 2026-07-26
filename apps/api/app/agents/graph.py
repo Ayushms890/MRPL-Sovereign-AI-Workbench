@@ -3,7 +3,7 @@ from typing import Literal, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.agents.planner import PlannerAgent, PlannerResult
-from app.agents.registry import AgentBuildContext, AgentRegistry
+from app.agents.registry import AgentBuildContext, AgentRegistry, build_agent_registry
 from app.providers.base import LLMMessage, LLMProvider
 from app.providers.embeddings.base import EmbeddingProvider
 from app.retrieval.repository import RetrievalRepository
@@ -30,17 +30,19 @@ class MultiAgentGraph(PlannerAgent):
         self,
         llm_provider: LLMProvider,
         tools: ToolRegistry,
-        agents: AgentRegistry,
+        agents: AgentRegistry | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         retrieval_repository: RetrievalRepository | None = None,
         user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> None:
         self.llm_provider = llm_provider
         self.tools = tools
-        self.agents = agents
+        self.agents = agents if agents is not None else build_agent_registry()
         self.embedding_provider = embedding_provider
         self.retrieval_repository = retrieval_repository
         self.user_id = user_id
+        self.workspace_id = workspace_id
         self.graph = self._build_graph()
 
     def run(self, user_input: str, history: list[LLMMessage] | None = None) -> PlannerResult:
@@ -100,7 +102,7 @@ class MultiAgentGraph(PlannerAgent):
             try:
                 query_embedding = self.embedding_provider.embed([state["user_input"]])[0]
                 chunks = self.retrieval_repository.search(
-                    user_id=self.user_id, embedding=query_embedding, limit=2
+                    user_id=self.user_id, embedding=query_embedding, limit=2, workspace_id=self.workspace_id
                 )
                 relevant_chunks = [chunk for chunk in chunks if chunk.score <= 0.5]
                 if relevant_chunks:

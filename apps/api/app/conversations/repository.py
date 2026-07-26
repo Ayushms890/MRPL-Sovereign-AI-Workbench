@@ -1,5 +1,5 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import Conversation, Message
 from app.infrastructure.models import ConversationModel, MessageModel, utc_now
@@ -9,6 +9,14 @@ class ConversationRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def list_for_workspace(self, workspace_id: str) -> list[Conversation]:
+        conversations = self.session.scalars(
+            select(ConversationModel)
+            .where(ConversationModel.workspace_id == workspace_id)
+            .order_by(ConversationModel.updated_at.desc())
+        ).all()
+        return [self._conversation_to_entity(conversation) for conversation in conversations]
+
     def list_for_user(self, user_id: str) -> list[Conversation]:
         conversations = self.session.scalars(
             select(ConversationModel)
@@ -16,6 +24,10 @@ class ConversationRepository:
             .order_by(ConversationModel.updated_at.desc())
         ).all()
         return [self._conversation_to_entity(conversation) for conversation in conversations]
+
+    def get_by_id(self, conversation_id: str) -> Conversation | None:
+        conversation = self.session.get(ConversationModel, conversation_id)
+        return self._conversation_to_entity(conversation) if conversation else None
 
     def get_for_user(self, conversation_id: str, user_id: str) -> Conversation | None:
         conversation = self.session.scalar(
@@ -26,33 +38,29 @@ class ConversationRepository:
         )
         return self._conversation_to_entity(conversation) if conversation else None
 
-    def create(self, user_id: str, title: str) -> Conversation:
-        conversation = ConversationModel(user_id=user_id, title=title)
+    def create(self, user_id: str, title: str, workspace_id: str | None = None) -> Conversation:
+        conversation = ConversationModel(user_id=user_id, workspace_id=workspace_id, title=title)
         self.session.add(conversation)
         self.session.commit()
         self.session.refresh(conversation)
         return self._conversation_to_entity(conversation)
 
-    def delete(self, conversation_id: str, user_id: str) -> bool:
-        conversation = self.session.scalar(
-            select(ConversationModel).where(
-                ConversationModel.id == conversation_id,
-                ConversationModel.user_id == user_id,
-            )
-        )
+    def delete(self, conversation_id: str, user_id: str | None = None) -> bool:
+        stmt = select(ConversationModel).where(ConversationModel.id == conversation_id)
+        if user_id:
+            stmt = stmt.where(ConversationModel.user_id == user_id)
+        conversation = self.session.scalar(stmt)
         if conversation is None:
             return False
         self.session.delete(conversation)
         self.session.commit()
         return True
 
-    def update_title(self, conversation_id: str, user_id: str, title: str) -> Conversation | None:
-        conversation = self.session.scalar(
-            select(ConversationModel).where(
-                ConversationModel.id == conversation_id,
-                ConversationModel.user_id == user_id,
-            )
-        )
+    def update_title(self, conversation_id: str, title: str, user_id: str | None = None) -> Conversation | None:
+        stmt = select(ConversationModel).where(ConversationModel.id == conversation_id)
+        if user_id:
+            stmt = stmt.where(ConversationModel.user_id == user_id)
+        conversation = self.session.scalar(stmt)
         if conversation is None:
             return None
         conversation.title = title
@@ -63,6 +71,7 @@ class ConversationRepository:
     def list_messages(self, conversation_id: str) -> list[Message]:
         messages = self.session.scalars(
             select(MessageModel)
+            .options(joinedload(MessageModel.user))
             .where(MessageModel.conversation_id == conversation_id)
             .order_by(MessageModel.created_at.asc())
         ).all()
@@ -74,12 +83,14 @@ class ConversationRepository:
         role: str,
         content: str,
         tool_name: str | None = None,
+        user_id: str | None = None,
     ) -> Message:
         message = MessageModel(
             conversation_id=conversation_id,
             role=role,
             content=content,
             tool_name=tool_name,
+            user_id=user_id,
         )
         conversation = self.session.get(ConversationModel, conversation_id)
         if conversation:
@@ -102,6 +113,7 @@ class ConversationRepository:
         return Conversation(
             id=conversation.id,
             user_id=conversation.user_id,
+            workspace_id=conversation.workspace_id,
             title=conversation.title,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
@@ -112,6 +124,9 @@ class ConversationRepository:
         tool_output = message.tool_calls[0].output if message.tool_calls else None
         agent_name = message.tool_calls[0].agent_name if message.tool_calls else None
         tool_arguments = message.tool_calls[0].arguments if message.tool_calls else None
+        user_id = message.user_id
+        user_name = message.user.name if message.user else None
+        user_email = message.user.email if message.user else None
         return Message(
             id=message.id,
             conversation_id=message.conversation_id,
@@ -122,4 +137,7 @@ class ConversationRepository:
             tool_output=tool_output,
             agent_name=agent_name,
             tool_arguments=tool_arguments,
+            user_id=user_id,
+            user_name=user_name,
+            user_email=user_email,
         )

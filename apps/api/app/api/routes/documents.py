@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_workspace_role
 from app.api.deps_providers import get_embedding_provider
 from app.api.rate_limit_dependencies import rate_limit_by_user
 from app.api.schemas import DocumentCreateRequest, DocumentJobResponse, DocumentJobStatusResponse, DocumentResponse
@@ -27,6 +27,8 @@ def create_document(
     payload: DocumentCreateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     embedding_provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
+    resolved_ws_id: Annotated[str, Depends(require_workspace_role("owner", "member"))],
+    workspace_id: str | None = None,
 ) -> DocumentJobResponse:
     queue = build_job_queue()
     if queue is None:
@@ -45,6 +47,7 @@ def create_document(
             "document_ingestion",
             {
                 "user_id": current_user.id,
+                "workspace_id": resolved_ws_id,
                 "title": payload.title.strip(),
                 "content": payload.content,
             },
@@ -77,9 +80,11 @@ def get_document_job(
 def list_documents(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db_session)],
+    resolved_ws_id: Annotated[str, Depends(require_workspace_role("owner", "member", "viewer"))],
+    workspace_id: str | None = None,
 ) -> list[DocumentResponse]:
     documents = session.scalars(
-        select(DocumentModel).where(DocumentModel.user_id == current_user.id).order_by(DocumentModel.created_at.desc())
+        select(DocumentModel).where(DocumentModel.workspace_id == resolved_ws_id).order_by(DocumentModel.created_at.desc())
     ).all()
     return [
         DocumentResponse(
@@ -98,11 +103,11 @@ def delete_document(
     document_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[Session, Depends(get_db_session)],
+    _: Annotated[str, Depends(require_workspace_role("owner", "member"))],
 ) -> None:
     document = session.scalar(
         select(DocumentModel).where(
             DocumentModel.id == document_id,
-            DocumentModel.user_id == current_user.id
         )
     )
     if not document:

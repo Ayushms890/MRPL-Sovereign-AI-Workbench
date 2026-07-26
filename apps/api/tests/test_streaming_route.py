@@ -2,32 +2,28 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
 from app.api.deps_providers import get_conversation_repository, get_planner_agent
+from app.auth.repository import UserRepository
+from app.conversations.repository import ConversationRepository
+from app.db import get_db_session
 from app.domain.entities import User
 from app.main import app
+from app.workspaces.repository import WorkspaceRepository
 
 
-def test_streaming_message_route(db_session):
-    now = datetime.now(timezone.utc)
-    user = User(
-        id="stream-user-1",
-        email="stream@example.com",
-        name="Stream User",
-        emailVerified=True,
-        createdAt=now,
-        updatedAt=now,
-    )
+def test_streaming_message_route(db_session: Session):
+    user_repo = UserRepository(db_session)
+    user_entity = user_repo.create_user_with_password("stream@example.com", "pw", "Stream User")
+    
+    ws_repo = WorkspaceRepository(db_session)
+    ws = ws_repo.get_personal_workspace(user_entity.id)
+    ws_id = ws.id if ws else "ws_test"
 
-    mock_repo = MagicMock()
-    mock_repo.get_for_user.return_value = MagicMock(
-        id="conv-stream-1", user_id=user.id, title="Stream Conv"
-    )
-    mock_repo.add_message.side_effect = lambda conversation_id, role, content, tool_name=None: MagicMock(
-        id=f"msg-{role}-1", role=role, content=content, tool_name=tool_name
-    )
-    mock_repo.list_messages.return_value = []
+    conv_repo = ConversationRepository(db_session)
+    conv = conv_repo.create(user_id=user_entity.id, title="Stream Conv", workspace_id=ws_id)
 
     mock_agent = MagicMock()
     mock_agent.run.return_value = MagicMock(
@@ -38,13 +34,22 @@ def test_streaming_message_route(db_session):
         thought_process="User wants test research.",
     )
 
+    user = User(
+        id=user_entity.id,
+        email=user_entity.email,
+        name=user_entity.name,
+        emailVerified=True,
+        createdAt=datetime.now(timezone.utc),
+        updatedAt=datetime.now(timezone.utc),
+    )
+
+    app.dependency_overrides[get_db_session] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_conversation_repository] = lambda: mock_repo
     app.dependency_overrides[get_planner_agent] = lambda: mock_agent
 
     client = TestClient(app)
     response = client.post(
-        "/conversations/conv-stream-1/messages/stream",
+        f"/conversations/{conv.id}/messages/stream",
         json={"content": "What is the latest AI news?"},
     )
 

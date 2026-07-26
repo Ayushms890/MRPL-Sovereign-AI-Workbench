@@ -71,6 +71,26 @@ export function ExportShareModal({ isOpen, onClose, title, messages, conversatio
     }
   };
 
+  const revokeShareLink = async () => {
+    if (!conversationId) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_URL}/conversations/${conversationId}/share`, {
+        method: "DELETE",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        throw new Error("Failed to revoke share link");
+      }
+      setSharingUrl(null);
+      toast.success("Share link revoked successfully!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to revoke share link");
+    }
+  };
+
   const exportMarkdown = () => {
     const md = messages
       .map((m) => `### ${m.role === "user" ? "User" : "Archimedes"}\n${m.content}\n`)
@@ -278,6 +298,27 @@ export function ExportShareModal({ isOpen, onClose, title, messages, conversatio
                   }}
                 >
                   {copiedLink ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                <span style={{ fontSize: "11px", color: "#e11d48", fontWeight: 500 }}>
+                  ⚠️ Expires in 30 days
+                </span>
+                <button
+                  type="button"
+                  onClick={revokeShareLink}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#dc2626",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                >
+                  Unshare link
                 </button>
               </div>
             </div>

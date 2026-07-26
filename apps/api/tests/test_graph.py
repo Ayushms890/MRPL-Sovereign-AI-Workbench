@@ -21,7 +21,7 @@ class FakeEmbeddingProvider:
 
 
 class FakeRetrievalRepository:
-    def search(self, user_id: str, embedding: list[float], limit: int = 4) -> list[RetrievedChunk]:
+    def search(self, user_id: str, embedding: list[float], limit: int = 4, workspace_id: str | None = None) -> list[RetrievedChunk]:
         return [
             RetrievedChunk(
                 id="chunk-1",

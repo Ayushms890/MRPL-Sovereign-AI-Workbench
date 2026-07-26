@@ -57,14 +57,18 @@ def test_invalid_token_returns_401(client: TestClient) -> None:
     assert response.json()["detail"] == "Invalid bearer token"
 
 
-def test_jwt_secret_unset_raises_runtime_error(monkeypatch) -> None:
+def test_jwt_secret_unset_or_short_raises_runtime_error(monkeypatch) -> None:
     import importlib
     import app.auth.security
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "jwt_secret", "")
-    with pytest.raises(RuntimeError, match="JWT_SECRET is required"):
+    with pytest.raises(RuntimeError, match="JWT_SECRET must be at least 32 characters"):
         importlib.reload(app.auth.security)
 
-    monkeypatch.setattr(settings, "jwt_secret", "test-secret-do-not-use-in-prod")
+    monkeypatch.setattr(settings, "jwt_secret", "short_secret")
+    with pytest.raises(RuntimeError, match="JWT_SECRET must be at least 32 characters"):
+        importlib.reload(app.auth.security)
+
+    monkeypatch.setattr(settings, "jwt_secret", "test-secret-do-not-use-in-prod-32-chars-long")
     importlib.reload(app.auth.security)

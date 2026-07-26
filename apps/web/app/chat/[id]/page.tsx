@@ -3,7 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useChat } from "../../chat-context";
-import { User, Bot, Wrench, Copy, ThumbsUp, ThumbsDown, Share2, PanelRightOpen } from "lucide-react";
+import { useAuth } from "../../contexts/auth-context";
+import { User, Bot, Wrench, Copy, ThumbsUp, ThumbsDown, Share2, PanelRightOpen, Users } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ExecutionTrace } from "../../components/execution-trace";
@@ -16,6 +17,7 @@ import { ChartRenderer } from "../../components/chart-renderer";
 export default function ChatSessionPage() {
   const params = useParams();
   const chatId = params.id as string;
+  const { user } = useAuth();
 
   const [artifact, setArtifact] = useState<{ title: string; language: string; content: string } | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
@@ -33,9 +35,13 @@ export default function ChatSessionPage() {
   const currentConv = conversations.find((c) => c.id === chatId);
 
   useEffect(() => {
-    if (chatId && token) {
+    if (chatId) {
       setActiveConversationId(chatId);
-      void loadMessages(token, chatId);
+      void loadMessages(token || undefined, chatId);
+      const interval = setInterval(() => {
+        void loadMessages(token || undefined, chatId);
+      }, 2000);
+      return () => clearInterval(interval);
     }
   }, [chatId, token]);
 
@@ -87,25 +93,67 @@ export default function ChatSessionPage() {
       <div className="messages" style={{ flex: 1 }}>
 
         {messages.map((message) => {
-          const isUser = message.role === "user";
+          const isAssistant = message.role === "assistant";
+          const isCurrentUser = message.user_id
+            ? message.user_id === user?.id
+            : message.role === "user";
+
+          let senderName = "Archimedes";
+          if (!isAssistant) {
+            if (isCurrentUser) {
+              senderName = "You";
+            } else {
+              senderName = message.user_name || message.user_email || "Team Member";
+            }
+          }
+
           return (
-            <div key={message.id} className={`message-group ${isUser ? "user-group" : "assistant-group"}`}>
+            <div
+              key={message.id}
+              className={`message-group ${
+                isAssistant
+                  ? "assistant-group"
+                  : isCurrentUser
+                  ? "user-group"
+                  : "teammate-group user-group"
+              }`}
+            >
               <div
-                className={`message-avatar ${isUser ? "user-avatar" : "assistant-avatar"}`}
-                style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+                className={`message-avatar ${
+                  isAssistant
+                    ? "assistant-avatar"
+                    : isCurrentUser
+                    ? "user-avatar"
+                    : "teammate-avatar"
+                }`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: !isAssistant && !isCurrentUser ? "#0284c7" : undefined,
+                  color: "#ffffff",
+                }}
               >
-                {isUser ? <User size={16} /> : <Bot size={16} />}
+                {isAssistant ? (
+                  <Bot size={16} />
+                ) : isCurrentUser ? (
+                  <User size={16} />
+                ) : (
+                  <Users size={16} />
+                )}
               </div>
 
               <div className="message-bubble-wrapper">
-                {!isUser && message.execution_steps && message.execution_steps.length > 0 && (
+                {!isAssistant && message.execution_steps && message.execution_steps.length > 0 && (
                   <ExecutionTrace steps={message.execution_steps} isPending={false} />
                 )}
 
                 <article className="message-bubble">
-                  <span>{isUser ? "You" : "Archimedes"}</span>
+                  <span style={{ fontWeight: 700, color: !isAssistant && !isCurrentUser ? "#0284c7" : undefined }}>
+                    {senderName}
+                  </span>
                   
-                  {!isUser && message.tool_name === "chart_generator" && message.tool_output && !message.content.includes('"chart_type"') && (
+                  {isAssistant && message.tool_name === "chart_generator" && message.tool_output && !message.content.includes('"chart_type"') && (
                     <ChartRenderer jsonContent={message.tool_output} />
                   )}
 
@@ -125,7 +173,7 @@ export default function ChatSessionPage() {
                   )}
                 </article>
 
-                {!isUser && (
+                {isAssistant && (
                   <div className="message-actions">
                     <button
                       type="button"

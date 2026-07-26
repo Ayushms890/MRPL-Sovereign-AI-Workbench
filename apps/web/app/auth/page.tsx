@@ -6,6 +6,20 @@ import { useAuth } from "../contexts/auth-context";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+function sanitizeNextUrl(rawNext: string | null): string {
+  if (!rawNext) return "/chat";
+  const trimmed = rawNext.trim();
+  if (
+    trimmed.startsWith("/") &&
+    !trimmed.startsWith("//") &&
+    !trimmed.startsWith("/\\") &&
+    !trimmed.includes(":")
+  ) {
+    return trimmed;
+  }
+  return "/chat";
+}
+
 export default function AuthPage() {
   const router = useRouter();
   const { isLoaded, isSignedIn, login } = useAuth();
@@ -20,7 +34,8 @@ export default function AuthPage() {
   useEffect(() => {
     if (isLoaded && isSignedIn) {
       const params = new URLSearchParams(window.location.search);
-      const dest = params.get("redirect") || "/chat";
+      const rawNext = params.get("next") || params.get("redirect");
+      const dest = sanitizeNextUrl(rawNext);
       router.replace(dest);
     }
   }, [isLoaded, isSignedIn, router]);
@@ -48,7 +63,8 @@ export default function AuthPage() {
 
       login(data.access_token, data.user);
       const params = new URLSearchParams(window.location.search);
-      const dest = params.get("redirect") || "/chat";
+      const rawNext = params.get("next") || params.get("redirect");
+      const dest = sanitizeNextUrl(rawNext);
       router.push(dest);
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred");

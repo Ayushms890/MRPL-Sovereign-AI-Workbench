@@ -205,10 +205,13 @@ def test_list_documents(
     db_session: Session,
 ) -> None:
     from app.infrastructure.models import UserModel, DocumentModel, DocumentChunkModel
+    from app.workspaces.repository import WorkspaceRepository
     user = db_session.scalar(select(UserModel).where(UserModel.email == "user@example.com"))
     assert user is not None
+    ws = WorkspaceRepository(db_session).get_personal_workspace(user.id)
+    ws_id = ws.id if ws else None
 
-    doc1 = DocumentModel(user_id=user.id, title="Doc 1", source_type="pasted_text")
+    doc1 = DocumentModel(user_id=user.id, workspace_id=ws_id, title="Doc 1", source_type="pasted_text")
     db_session.add(doc1)
     db_session.flush()
     
@@ -230,10 +233,13 @@ def test_delete_document(
     db_session: Session,
 ) -> None:
     from app.infrastructure.models import UserModel, DocumentModel, DocumentChunkModel
+    from app.workspaces.repository import WorkspaceRepository
     user = db_session.scalar(select(UserModel).where(UserModel.email == "user@example.com"))
     assert user is not None
+    ws = WorkspaceRepository(db_session).get_personal_workspace(user.id)
+    ws_id = ws.id if ws else None
 
-    doc1 = DocumentModel(user_id=user.id, title="Doc to delete", source_type="pasted_text")
+    doc1 = DocumentModel(user_id=user.id, workspace_id=ws_id, title="Doc to delete", source_type="pasted_text")
     db_session.add(doc1)
     db_session.flush()
 

@@ -20,11 +20,13 @@ import {
   Paperclip,
   Smile,
   SendHorizontal,
-  Share2
+  Share2,
+  Users,
 } from "lucide-react";
 import { useAuth } from "../contexts/auth-context";
 import { VoiceInput } from "../components/voice-input";
 import { ExportShareModal } from "../components/export-share-modal";
+import { WorkspaceMembersModal } from "../components/workspace-members-modal";
 
 const COMMANDS = [
   {
@@ -193,7 +195,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     saveApiKey,
     deleteApiKey,
     uploadDocument,
+    workspaces,
+    activeWorkspace,
+    myRole,
+    switchWorkspace,
   } = useChat();
+
+  const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
 
   const scrollViewportRef = React.useRef<HTMLDivElement>(null);
 
@@ -275,8 +283,58 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
               <ChevronLeft size={16} />
             </button>
           </div>
-          <button type="button" className="new-chat-btn" onClick={createConversation}>
-            <span>New Chat</span>
+
+          {/* Workspace Switcher Bar */}
+          <div style={{ display: "flex", gap: "6px", margin: "10px 0 8px" }}>
+            <select
+              value={activeWorkspace?.id || ""}
+              onChange={(e) => switchWorkspace(e.target.value)}
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                borderRadius: "6px",
+                background: "#1e293b",
+                color: "#f8fafc",
+                border: "1px solid #334155",
+                fontSize: "12px",
+                fontWeight: "500",
+                outline: "none",
+              }}
+            >
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name} ({ws.my_role})
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setIsWorkspaceModalOpen(true)}
+              title="Workspace Settings & Members"
+              style={{
+                padding: "6px 10px",
+                borderRadius: "6px",
+                background: "#334155",
+                color: "#f8fafc",
+                border: "none",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Users size={14} />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            className="new-chat-btn"
+            disabled={myRole === "viewer"}
+            onClick={createConversation}
+            style={{ opacity: myRole === "viewer" ? 0.5 : 1, cursor: myRole === "viewer" ? "not-allowed" : "pointer" }}
+          >
+            <span>{myRole === "viewer" ? "Read-Only Mode" : "New Chat"}</span>
             <Plus size={16} />
           </button>
         </div>
@@ -826,6 +884,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
         </div>
+      )}
+      {/* Workspace Members Modal */}
+      {isWorkspaceModalOpen && (
+        <WorkspaceMembersModal
+          isOpen={isWorkspaceModalOpen}
+          onClose={() => setIsWorkspaceModalOpen(false)}
+        />
       )}
     </main>
   );

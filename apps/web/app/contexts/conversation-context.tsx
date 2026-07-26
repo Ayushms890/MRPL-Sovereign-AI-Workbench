@@ -11,6 +11,7 @@ import React, {
 import { useRouter } from "next/navigation";
 import { createApiClient } from "../lib/api-client";
 import { useAuth } from "./auth-context";
+import { useWorkspace } from "./workspace-context";
 import { useUi } from "./ui-context";
 import { useApiKeys } from "./api-keys-context";
 import { pollJob } from "../hooks/use-job-poller";
@@ -41,6 +42,9 @@ export type Message = {
   tool_arguments?: Record<string, any> | null;
   thought_process?: string | null;
   created_at: string;
+  user_id?: string | null;
+  user_name?: string | null;
+  user_email?: string | null;
   execution_steps?: ExecutionStep[];
 };
 
@@ -109,6 +113,7 @@ const ConversationContext = createContext<ConversationContextType | undefined>(u
 export const ConversationProvider = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
   const { getToken, isAuthenticated } = useAuth();
+  const { activeWorkspaceId } = useWorkspace();
   const { setStatus, setIsSending, setDraft, draft, setIsApiKeyWarningOpen } = useUi();
   const { configuredProviders } = useApiKeys();
 
@@ -119,13 +124,15 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
 
-
-
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && activeWorkspaceId) {
       void loadConversations();
+      const interval = setInterval(() => {
+        void loadConversations();
+      }, 3500);
+      return () => clearInterval(interval);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, activeWorkspaceId]);
 
   const conversationGroups = useMemo(() => {
     const today: Conversation[] = [];
@@ -159,41 +166,44 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const api = useMemo(() => createApiClient(getToken), [getToken]);
 
   const loadConversations = async (authToken?: string) => {
+    if (!activeWorkspaceId) return;
     try {
-      let data: Conversation[];
-      if (authToken) {
-        const response = await fetch(`${API_URL}/conversations`, {
-          headers: { Authorization: `Bearer ${authToken}` },
-        });
-        if (!response.ok) throw new Error("Failed to load conversations");
-        data = await response.json();
-      } else {
-        data = await api<Conversation[]>("/conversations");
-      }
+      const activeToken = authToken || (typeof window !== "undefined" ? localStorage.getItem("aios_token") : null);
+      if (!activeToken) return;
+
+      const url = `/conversations?workspace_id=${activeWorkspaceId}`;
+      const response = await fetch(`${API_URL}${url}`, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+      });
+      if (!response.ok) return;
+      const data: Conversation[] = await response.json();
       setConversations(data);
     } catch (error) {
-      console.error("Error loading conversations:", error);
+      // Silently handle transient network errors during background polling
     }
   };
 
   const loadMessages = async (authToken: string | undefined, conversationId: string) => {
+    if (!conversationId) return;
     try {
-      let data: Message[];
-      if (authToken) {
-        const response = await fetch(
-          `${API_URL}/conversations/${conversationId}/messages`,
-          {
-            headers: { Authorization: `Bearer ${authToken}` },
-          }
-        );
-        if (!response.ok) throw new Error("Failed to load messages");
-        data = await response.json();
-      } else {
-        data = await api<Message[]>(`/conversations/${conversationId}/messages`);
-      }
+      const activeToken = authToken || (typeof window !== "undefined" ? localStorage.getItem("aios_token") : null);
+      if (!activeToken) return;
+
+      const response = await fetch(
+        `${API_URL}/conversations/${conversationId}/messages`,
+        {
+          headers: { Authorization: `Bearer ${activeToken}` },
+        }
+      );
+      if (!response.ok) return;
+      const data: Message[] = await response.json();
 
       const processedData = data.map((msg) => {
-        if (msg.role === "assistant" && msg.tool_name && !msg.execution_steps) {
+        if (
+          msg.role === "assistant" &&
+          (msg.tool_name || msg.agent_name || msg.thought_process) &&
+          !msg.execution_steps
+        ) {
           const timestamp = msg.created_at || new Date().toISOString();
           const steps: ExecutionStep[] = [
             {
@@ -203,6 +213,16 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
               timestamp,
             },
           ];
+
+          if (msg.thought_process) {
+            steps.push({
+              step: "thinking",
+              label: "Model Reasoning",
+              status: "completed",
+              timestamp,
+              metadata: { thought: msg.thought_process },
+            });
+          }
 
           if (msg.agent_name) {
             steps.push({
@@ -214,16 +234,18 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
             });
           }
 
-          steps.push({
-            step: "tool",
-            label: `Executed tool \`${msg.tool_name}\``,
-            status: "completed",
-            timestamp,
-            metadata: {
-              tool_name: msg.tool_name,
-              tool_output: msg.tool_output,
-            },
-          });
+          if (msg.tool_name) {
+            steps.push({
+              step: "tool",
+              label: `Executed tool \`${msg.tool_name}\``,
+              status: "completed",
+              timestamp,
+              metadata: {
+                tool_name: msg.tool_name,
+                tool_output: msg.tool_output,
+              },
+            });
+          }
 
           steps.push({
             step: "finalize",
@@ -242,13 +264,17 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
 
       setMessages(processedData);
     } catch (error) {
-      console.error("Error loading messages:", error);
+      // Silently handle transient network errors during background polling
     }
   };
 
   const createConversation = async (): Promise<Conversation | null> => {
+    if (!activeWorkspaceId) {
+      toast.error("No active workspace selected");
+      return null;
+    }
     try {
-      const newConv = await api<Conversation>("/conversations", {
+      const newConv = await api<Conversation>(`/conversations?workspace_id=${activeWorkspaceId}`, {
         method: "POST",
         body: JSON.stringify({ title: "New Session" }),
       });
@@ -321,6 +347,14 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
     setDraft("");
     setIsSending(true);
     setStatus("Thinking...");
+    setCurrentExecutionSteps([
+      {
+        step: "planner",
+        label: "Planner analyzing prompt...",
+        status: "in_progress",
+        timestamp: new Date().toISOString(),
+      },
+    ]);
 
     try {
       const token = await getToken();
@@ -366,8 +400,6 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         response.user_message,
       ]);
 
-      setCurrentExecutionSteps([]);
-
       // Start polling the job until completed
       pollJob<{
         id: string;
@@ -408,7 +440,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
             setStatus("Orchestrating agents...");
           }
 
-          if (job.execution_steps) {
+          if (job.execution_steps && job.execution_steps.length > 0) {
             setCurrentExecutionSteps(job.execution_steps);
           }
 

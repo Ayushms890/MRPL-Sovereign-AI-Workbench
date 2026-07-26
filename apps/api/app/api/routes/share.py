@@ -2,13 +2,14 @@ import logging
 import json
 from uuid import uuid4
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, status
-
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from app.api.dependencies import get_current_user
 from app.api.deps_providers import get_conversation_repository, get_redis_cache
 from app.api.schemas import ShareCreateResponse, ShareSnapshotResponse, ConversationResponse
+from app.api.rate_limit_dependencies import rate_limit_by_ip
 from app.conversations.repository import ConversationRepository
 from app.cache.redis_client import RedisCache
+from app.core.config import settings
 from app.domain.entities import User
 from app.tools.repository import ToolCallRepository
 
@@ -58,12 +59,14 @@ def share_conversation(
         "messages": serialized_messages
     }
 
-    # 4. Save to Redis with a unique share_id
+    # 4. Save to Redis with a unique share_id and tracking set
     share_id = str(uuid4())
     cache_key = f"shared_chat:{share_id}"
+    tracking_key = f"conv_shares:{conversation_id}"
     try:
-        # Save indefinitely
-        cache.client.set(cache_key, json.dumps(payload))
+        cache.client.set(cache_key, json.dumps(payload), ex=settings.share_ttl_seconds)
+        cache.client.sadd(tracking_key, share_id)
+        cache.client.expire(tracking_key, settings.share_ttl_seconds)
     except Exception as exc:
         logger.exception("Failed to write share snapshot to Redis")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to persist share snapshot.") from exc
@@ -71,7 +74,11 @@ def share_conversation(
     return ShareCreateResponse(share_id=share_id, title=conversation.title)
 
 
-@router.get("/share/{share_id}", response_model=ShareSnapshotResponse)
+@router.get(
+    "/share/{share_id}",
+    response_model=ShareSnapshotResponse,
+    dependencies=[Depends(rate_limit_by_ip("share_view", limit=30, window_seconds=60))],
+)
 def get_shared_snapshot(
     share_id: str,
     cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
@@ -154,6 +161,8 @@ def import_shared_conversation(
     db_session = getattr(repo, "session", None) or getattr(repo, "inner").session
     tool_repo = ToolCallRepository(db_session)
     for msg in data["messages"]:
+        if msg.get("role") not in ("user", "assistant", "system"):
+            continue
         new_msg = repo.add_message(
             conversation_id=new_conv.id,
             role=msg["role"],
@@ -182,3 +191,31 @@ def import_shared_conversation(
         created_at=new_conv.created_at,
         updated_at=new_conv.updated_at,
     )
+
+
+@router.delete("/{conversation_id}/share", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_share(
+    conversation_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
+) -> Response:
+    conversation = repo.get_for_user(conversation_id, current_user.id)
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+
+    if cache is not None:
+        tracking_key = f"conv_shares:{conversation_id}"
+        try:
+            share_ids = cache.client.smembers(tracking_key)
+            if share_ids:
+                for share_id in share_ids:
+                    # decode from bytes if necessary, or string
+                    sid = share_id.decode() if hasattr(share_id, "decode") else str(share_id)
+                    cache.client.delete(f"shared_chat:{sid}")
+            cache.client.delete(tracking_key)
+        except Exception as exc:
+            logger.exception("Failed to revoke share snapshot in Redis")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke share snapshot.") from exc
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

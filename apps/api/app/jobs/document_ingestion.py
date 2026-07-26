@@ -31,6 +31,7 @@ def run_document_ingestion_job(payload: dict) -> dict:
 
         document = DocumentRepository(session).create_with_chunks(
             user_id=user_id,
+            workspace_id=payload.get("workspace_id"),
             title=payload["title"],
             source_type="pasted_text",
             chunks=chunks,

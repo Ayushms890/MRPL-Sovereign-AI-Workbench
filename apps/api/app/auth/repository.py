@@ -41,6 +41,10 @@ class UserRepository:
         self.session.add(user)
         self.session.commit()
         self.session.refresh(user)
+
+        from app.workspaces.repository import WorkspaceRepository
+        WorkspaceRepository(self.session).create(name="Personal", owner_id=user.id)
+
         return self._to_entity(user)
 
     def get_or_create_by_clerk_id(self, clerk_user_id: str, email: str = "", name: str = "") -> User:
@@ -61,6 +65,8 @@ class UserRepository:
             self.session.add(user)
             self.session.commit()
             self.session.refresh(user)
+            from app.workspaces.repository import WorkspaceRepository
+            WorkspaceRepository(self.session).create(name="Personal", owner_id=user.id)
             return self._to_entity(user)
         except Exception:
             self.session.rollback()

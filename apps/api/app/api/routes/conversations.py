@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 
 from app.agents.planner import PlannerAgent
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_workspace_role
 from app.api.deps_providers import get_conversation_repository, get_planner_agent, get_redis_cache
 from app.api.rate_limit_dependencies import rate_limit_by_user
 from app.api.schemas import (
@@ -35,8 +35,10 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 def list_conversations(
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    resolved_ws_id: Annotated[str, Depends(require_workspace_role("owner", "member", "viewer"))],
+    workspace_id: str | None = None,
 ) -> list[ConversationResponse]:
-    conversations = repo.list_for_user(current_user.id)
+    conversations = repo.list_for_workspace(resolved_ws_id)
     return [_conversation_response(conversation) for conversation in conversations]
 
 
@@ -45,8 +47,10 @@ def create_conversation(
     payload: ConversationCreateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    resolved_ws_id: Annotated[str, Depends(require_workspace_role("owner", "member"))],
+    workspace_id: str | None = None,
 ) -> ConversationResponse:
-    conversation = repo.create(user_id=current_user.id, title=payload.title.strip())
+    conversation = repo.create(user_id=current_user.id, title=payload.title.strip(), workspace_id=resolved_ws_id)
     return _conversation_response(conversation)
 
 
@@ -55,8 +59,9 @@ def list_messages(
     conversation_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    _: Annotated[str, Depends(require_workspace_role("owner", "member", "viewer"))],
 ) -> list[MessageResponse]:
-    _require_conversation(repo, conversation_id, current_user.id)
+    _require_conversation(repo, conversation_id)
     return [_message_response(message) for message in repo.list_messages(conversation_id)]
 
 
@@ -71,9 +76,10 @@ def send_message(
     payload: MessageCreateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    _: Annotated[str, Depends(require_workspace_role("owner", "member"))],
     cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
 ) -> AgentJobResponse:
-    _require_conversation(repo, conversation_id, current_user.id)
+    _require_conversation(repo, conversation_id)
 
     queue = build_job_queue()
     if queue is None:
@@ -98,7 +104,12 @@ def send_message(
                 logger.error("Error checking existing job status: %s", exc)
 
     content = payload.content.strip()
-    user_message = repo.add_message(conversation_id=conversation_id, role="user", content=content)
+    user_message = repo.add_message(
+        conversation_id=conversation_id,
+        role="user",
+        content=content,
+        user_id=current_user.id,
+    )
 
     try:
         job = queue.enqueue(
@@ -132,12 +143,18 @@ async def stream_message(
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
     agent: Annotated[PlannerAgent, Depends(get_planner_agent)],
+    _: Annotated[str, Depends(require_workspace_role("owner", "member"))],
     cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
 ) -> StreamingResponse:
-    _require_conversation(repo, conversation_id, current_user.id)
+    _require_conversation(repo, conversation_id)
 
     content = payload.content.strip()
-    user_message = repo.add_message(conversation_id=conversation_id, role="user", content=content)
+    user_message = repo.add_message(
+        conversation_id=conversation_id,
+        role="user",
+        content=content,
+        user_id=current_user.id,
+    )
 
     async def event_generator():
         all_messages = [
@@ -199,6 +216,7 @@ def get_message_job(
     conversation_id: str,
     job_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
+    _: Annotated[str, Depends(require_workspace_role("owner", "member", "viewer"))],
 ) -> AgentJobStatusResponse:
     queue = build_job_queue()
     if queue is None:
@@ -209,7 +227,6 @@ def get_message_job(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     if (
         job is None
-        or job.payload.get("user_id") != current_user.id
         or job.payload.get("conversation_id") != conversation_id
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
@@ -241,8 +258,9 @@ def delete_conversation(
     conversation_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    _: Annotated[str, Depends(require_workspace_role("owner", "member"))],
 ) -> Response:
-    deleted = repo.delete(conversation_id=conversation_id, user_id=current_user.id)
+    deleted = repo.delete(conversation_id=conversation_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -254,15 +272,16 @@ def update_conversation(
     payload: ConversationUpdateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
+    _: Annotated[str, Depends(require_workspace_role("owner", "member"))],
 ) -> ConversationResponse:
-    conversation = repo.update_title(conversation_id=conversation_id, user_id=current_user.id, title=payload.title.strip())
+    conversation = repo.update_title(conversation_id=conversation_id, title=payload.title.strip())
     if conversation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     return _conversation_response(conversation)
 
 
-def _require_conversation(repo: ConversationRepository, conversation_id: str, user_id: str) -> Conversation:
-    conversation = repo.get_for_user(conversation_id=conversation_id, user_id=user_id)
+def _require_conversation(repo: ConversationRepository, conversation_id: str) -> Conversation:
+    conversation = repo.get_by_id(conversation_id=conversation_id)
     if conversation is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     return conversation
@@ -294,4 +313,7 @@ def _message_response(message: Message) -> MessageResponse:
         agent_name=message.agent_name,
         tool_arguments=tool_args,
         created_at=message.created_at,
+        user_id=message.user_id,
+        user_name=message.user_name,
+        user_email=message.user_email,
     )

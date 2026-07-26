@@ -88,6 +88,9 @@ def run_chat_agent_job(payload: dict) -> dict:
             except Exception:
                 logger.exception("Failed to connect to user's database")
 
+        conv = inner_repo.get_by_id(conversation_id)
+        ws_id = conv.workspace_id if conv else None
+
         agent = MultiAgentGraph(
             llm_provider=llm_provider,
             tools=build_tool_registry(session, user_db_session=user_db_session),
@@ -95,6 +98,7 @@ def run_chat_agent_job(payload: dict) -> dict:
             embedding_provider=embedding_provider,
             retrieval_repository=RetrievalRepository(session),
             user_id=user_id,
+            workspace_id=ws_id,
         )
 
         all_messages = [

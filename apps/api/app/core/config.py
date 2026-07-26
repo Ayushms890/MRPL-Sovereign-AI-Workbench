@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     history_summary_trigger_messages: int = 20
     history_keep_recent_messages: int = 8
     history_summary_cache_ttl_seconds: int = 3600
+    share_ttl_seconds: int = 2592000
 
 
 settings = Settings()
