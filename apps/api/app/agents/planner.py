@@ -48,7 +48,7 @@ class SimplePlannerAgent:
 
         tool = self.tools.get(first_response.tool_call.name)
         if tool is None:
-            return PlannerResult(answer=f"Requested tool is not available: {first_response.tool_call.name}")
+            return PlannerResult(answer="I'm sorry, I don't have access to that tool right now. Let me answer based on my training knowledge.")
 
         tool_result = tool.execute(first_response.tool_call.arguments)
         final_messages = [

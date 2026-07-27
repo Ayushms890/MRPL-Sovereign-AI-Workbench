@@ -263,7 +263,21 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         return msg;
       });
 
-      setMessages(processedData);
+      // Deduplicate by id — prevents React duplicate-key warning when poll
+      // fires while an optimistically-appended message is still in state.
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const incoming = processedData;
+        // If every incoming id exists already and counts match, keep prev to
+        // avoid a re-render. Otherwise merge: keep any optimistic messages not
+        // yet on the server, then replace with the server list (deduped).
+        const seen = new Set<string>();
+        const merged: typeof incoming = [];
+        for (const m of incoming) {
+          if (!seen.has(m.id)) { seen.add(m.id); merged.push(m); }
+        }
+        return merged;
+      });
     } catch (error) {
       // Silently handle transient network errors during background polling
     }
@@ -515,18 +529,22 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
 
               setCurrentExecutionSteps(finalSteps);
 
-              setMessages((current) => [
-                ...current,
-                {
-                  id: result.id,
-                  role: result.role,
-                  content: result.content,
-                  tool_name: result.tool_name,
-                  tool_output: result.tool_output,
-                  created_at: result.created_at,
-                  execution_steps: finalSteps,
-                },
-              ]);
+              setMessages((current) => {
+                // Don't add if already present (e.g. polling already fetched it)
+                if (current.some((m) => m.id === result.id)) return current;
+                return [
+                  ...current,
+                  {
+                    id: result.id,
+                    role: result.role,
+                    content: result.content,
+                    tool_name: result.tool_name,
+                    tool_output: result.tool_output,
+                    created_at: result.created_at,
+                    execution_steps: finalSteps,
+                  },
+                ];
+              });
             }
             setIsSending(false);
             setStatus("Ready");

@@ -10,6 +10,19 @@ from app.tools.tavily_search import TavilySearchTool
 from app.tools.web_reader import WebReaderTool
 
 
+# Common LLM hallucinations → canonical registered tool names
+_TOOL_ALIASES: dict[str, str] = {
+    "google_search": "web_search",
+    "search_web": "web_search",
+    "tavily_search": "web_search",
+    "internet_search": "web_search",
+    "bing_search": "web_search",
+    "run_code": "execute_code",
+    "python": "execute_code",
+    "python_repl": "execute_code",
+}
+
+
 class ToolRegistry:
     def __init__(self, tools: list[Tool]) -> None:
         self._tools = {tool.name: tool for tool in tools}
@@ -18,7 +31,13 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def get(self, name: str) -> Tool | None:
-        return self._tools.get(name)
+        # First try exact match, then fall back to alias resolution
+        tool = self._tools.get(name)
+        if tool is None:
+            canonical = _TOOL_ALIASES.get(name)
+            if canonical:
+                tool = self._tools.get(canonical)
+        return tool
 
     def schemas(self) -> list[ToolSchema]:
         return [
