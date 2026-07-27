@@ -81,28 +81,6 @@ def send_message(
 ) -> AgentJobResponse:
     _require_conversation(repo, conversation_id)
 
-    queue = build_job_queue()
-    if queue is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chat requires Redis to be configured (UPSTASH_REDIS_REST_URL/TOKEN).",
-        )
-
-    # Concurrency Lock Guard: check if an active job is already running for this conversation
-    if cache:
-        lock_key = f"active_chat_job:{conversation_id}"
-        existing_job_id = cache.get(lock_key)
-        if existing_job_id:
-            try:
-                job = queue.get(existing_job_id)
-                if job and job.status.value in ["queued", "running"]:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="Archimedes is currently answering a query in this conversation. Please wait until it completes.",
-                    )
-            except JobQueueError as exc:
-                logger.error("Error checking existing job status: %s", exc)
-
     content = payload.content.strip()
     user_message = repo.add_message(
         conversation_id=conversation_id,
@@ -111,24 +89,53 @@ def send_message(
         user_id=current_user.id,
     )
 
-    try:
-        job = queue.enqueue(
-            "chat_agent_run",
-            {
-                "conversation_id": conversation_id,
-                "user_id": current_user.id,
-                "user_message_id": user_message.id,
-                "content": content,
-            },
-        )
+    queue = build_job_queue()
+    if queue is not None:
         if cache:
-            # Set the concurrency lock for 5 minutes (300 seconds)
-            cache.set(lock_key, job.id, ttl_seconds=300)
-    except JobQueueError as exc:
-        repo.delete_message(user_message.id)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            lock_key = f"active_chat_job:{conversation_id}"
+            try:
+                existing_job_id = cache.get(lock_key)
+                if existing_job_id:
+                    job = queue.get(existing_job_id)
+                    if job and job.status.value in ["queued", "running"]:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="Archimedes is currently answering a query in this conversation. Please wait until it completes.",
+                        )
+            except JobQueueError as exc:
+                logger.error("Error checking existing job status: %s", exc)
 
-    return AgentJobResponse(job_id=job.id, status=job.status.value, user_message=_message_response(user_message))
+        try:
+            job = queue.enqueue(
+                "chat_agent_run",
+                {
+                    "conversation_id": conversation_id,
+                    "user_id": current_user.id,
+                    "user_message_id": user_message.id,
+                    "content": content,
+                },
+            )
+            if cache:
+                cache.set(lock_key, job.id, ttl_seconds=300)
+            return AgentJobResponse(job_id=job.id, status=job.status.value, user_message=_message_response(user_message))
+        except Exception as exc:
+            logger.warning("Queue enqueue failed (%s), falling back to synchronous execution", exc)
+
+    # Fallback: run chat agent synchronously if Redis queue is disabled/failing
+    from app.jobs.chat_agent import run_chat_agent_job
+    fallback_job_id = f"sync_{uuid4().hex[:12]}"
+    try:
+        run_chat_agent_job({
+            "conversation_id": conversation_id,
+            "user_id": current_user.id,
+            "user_message_id": user_message.id,
+            "content": content,
+            "job_id": fallback_job_id,
+        })
+    except Exception as exc:
+        logger.exception("Synchronous fallback chat agent run failed: %s", exc)
+
+    return AgentJobResponse(job_id=fallback_job_id, status="succeeded", user_message=_message_response(user_message))
 
 
 # EXPERIMENTAL/UNUSED-BY-DEFAULT: Synchronous SSE chat endpoint.

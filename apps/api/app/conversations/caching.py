@@ -39,14 +39,7 @@ class CachingConversationRepository:
         return self.inner.update_title(conversation_id=conversation_id, title=title, user_id=user_id)
 
     def list_messages(self, conversation_id: str) -> list[Message]:
-        cache_key = self._messages_key(conversation_id)
-        cached_messages = self._cache_get(cache_key)
-        if cached_messages is not None:
-            return cached_messages
-
-        messages = self.inner.list_messages(conversation_id)
-        self._cache_set(cache_key, messages)
-        return messages
+        return self.inner.list_messages(conversation_id)
 
     def add_message(
         self,
@@ -54,18 +47,15 @@ class CachingConversationRepository:
         role: str,
         content: str,
         tool_name: str | None = None,
+        user_id: str | None = None,
     ) -> Message:
-        message = self.inner.add_message(
+        return self.inner.add_message(
             conversation_id=conversation_id,
             role=role,
             content=content,
             tool_name=tool_name,
+            user_id=user_id,
         )
-        try:
-            self.cache.delete(self._messages_key(conversation_id))
-        except Exception:
-            logger.exception("Conversation message cache invalidation failed")
-        return message
 
     @staticmethod
     def _messages_key(conversation_id: str) -> str:

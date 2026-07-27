@@ -39,8 +39,9 @@ export default function ChatSessionPage() {
       setActiveConversationId(chatId);
       void loadMessages(token || undefined, chatId);
       const interval = setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) return;
         void loadMessages(token || undefined, chatId);
-      }, 2000);
+      }, 5000);
       return () => clearInterval(interval);
     }
   }, [chatId, token]);

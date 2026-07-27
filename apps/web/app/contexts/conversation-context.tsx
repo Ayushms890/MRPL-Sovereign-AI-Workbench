@@ -128,8 +128,9 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
     if (isAuthenticated && activeWorkspaceId) {
       void loadConversations();
       const interval = setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) return;
         void loadConversations();
-      }, 3500);
+      }, 12000);
       return () => clearInterval(interval);
     }
   }, [isAuthenticated, activeWorkspaceId]);

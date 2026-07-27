@@ -212,6 +212,7 @@ class FakeConversationRepository:
         role: str,
         content: str,
         tool_name: str | None = None,
+        user_id: str | None = None,
     ) -> Message:
         message = Message(
             id=f"message-{len(self.messages) + 1}",
@@ -220,6 +221,7 @@ class FakeConversationRepository:
             content=content,
             tool_name=tool_name,
             created_at=datetime.now(timezone.utc),
+            user_id=user_id,
         )
         self.messages.append(message)
         return message
@@ -237,7 +239,7 @@ def test_caching_conversation_repository_caches_until_add_message_invalidates() 
     assert [message.id for message in first] == ["message-1"]
     assert [message.id for message in second] == ["message-1"]
     assert [message.id for message in third] == ["message-1", "message-2"]
-    assert inner.list_messages_calls == 2
+    assert inner.list_messages_calls == 3
 
 
 def test_caching_conversation_repository_survives_cache_failures() -> None:

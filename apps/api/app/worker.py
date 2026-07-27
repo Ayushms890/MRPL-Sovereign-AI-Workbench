@@ -25,7 +25,8 @@ def main() -> None:
         raise RuntimeError(
             "Worker requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to be set."
         )
-    logger.info("Worker started, polling every %.1fs", settings.worker_poll_interval_seconds)
+    idle_cycles = 0
+    logger.info("Worker started, polling with adaptive backoff (up to 5s)")
     while True:
         handled = False
         for job_type, handler in JOB_HANDLERS.items():
@@ -33,6 +34,7 @@ def main() -> None:
             if job is None:
                 continue
             handled = True
+            idle_cycles = 0
             job_logger = logging.LoggerAdapter(logger, {"job_id": job.id})
             job_logger.info("Running job %s (%s)", job.id, job.job_type)
             queue.update_status(job.id, JobStatus.RUNNING)
@@ -45,7 +47,11 @@ def main() -> None:
                 queue.update_status(job.id, JobStatus.FAILED, error=str(exc))
                 job_logger.exception("Job %s failed", job.id)
         if not handled:
-            time.sleep(settings.worker_poll_interval_seconds)
+            idle_cycles += 1
+            sleep_sec = min(settings.worker_poll_interval_seconds * (1.5 ** min(idle_cycles, 4)), 5.0)
+            time.sleep(sleep_sec)
+        else:
+            time.sleep(0.1)
 
 
 if __name__ == "__main__":
