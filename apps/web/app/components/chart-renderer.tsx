@@ -20,19 +20,66 @@ import {
 } from "recharts";
 
 interface ChartSpec {
-  chart_type: "bar" | "line" | "pie" | "area";
-  title: string;
-  data: Record<string, any>[];
-  x_key: string;
-  y_keys: string[];
+  chart_type?: "bar" | "line" | "pie" | "area";
+  title?: string;
+  data?: Record<string, any>[];
+  x_key?: string;
+  y_keys?: string[];
+  // Chart.js raw format (LLM hallucination fallback)
+  type?: "bar" | "line" | "pie" | "area" | "doughnut";
+  datasets?: { label?: string; data?: number[] }[];
+  labels?: string[];
 }
 
 const COLORS = ["#4f46e5", "#06b6d4", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6"];
 
 export function ChartRenderer({ jsonContent }: { jsonContent: string }) {
   try {
-    const spec: ChartSpec = JSON.parse(jsonContent);
-    const { chart_type = "bar", title = "Chart", data = [], x_key = "", y_keys = [] } = spec;
+    const raw = JSON.parse(jsonContent);
+
+    // Normalize Chart.js format → internal chart_spec format
+    let spec: {
+      chart_type: "bar" | "line" | "pie" | "area";
+      title: string;
+      data: Record<string, any>[];
+      x_key: string;
+      y_keys: string[];
+    };
+
+    const isChartJs = raw.type && (raw.labels || (raw.data?.labels));
+    if (isChartJs) {
+      // Handle both { type, labels, datasets } and { type, data: { labels, datasets } }
+      const labels: string[] = raw.labels ?? raw.data?.labels ?? [];
+      const datasets: { label?: string; data?: number[] }[] =
+        raw.datasets ?? raw.data?.datasets ?? [];
+      const chartType = raw.type === "doughnut" ? "pie" : (raw.type ?? "bar");
+      const x_key = "label";
+      const y_keys = datasets.map((d, i) => d.label ?? `series_${i}`);
+      const data = labels.map((label, idx) => {
+        const point: Record<string, any> = { label };
+        datasets.forEach((d, di) => {
+          point[y_keys[di]] = d.data?.[idx] ?? 0;
+        });
+        return point;
+      });
+      spec = {
+        chart_type: chartType as "bar" | "line" | "pie" | "area",
+        title: raw.options?.plugins?.title?.text ?? raw.title ?? "Chart",
+        data,
+        x_key,
+        y_keys,
+      };
+    } else {
+      spec = {
+        chart_type: raw.chart_type ?? "bar",
+        title: raw.title ?? "Chart",
+        data: raw.data ?? [],
+        x_key: raw.x_key ?? "",
+        y_keys: raw.y_keys ?? [],
+      };
+    }
+
+    const { chart_type, title, data, x_key, y_keys } = spec;
 
     if (!data || data.length === 0) {
       return (

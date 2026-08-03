@@ -268,7 +268,7 @@ export default function SharedChatPage() {
                       </ReactMarkdown>
                     </div>
 
-                    {message.tool_name && (
+                    {message.tool_name && message.tool_name !== "current_time" && (
                       <div className="tool-pill" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 12 }}>
                         <span className="tool-icon" style={{ display: "flex", alignItems: "center" }}>
                           <Wrench size={12} />
