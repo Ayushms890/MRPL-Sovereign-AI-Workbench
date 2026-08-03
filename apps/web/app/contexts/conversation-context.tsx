@@ -5,6 +5,7 @@ import React, {
   useContext,
   useState,
   useEffect,
+  useRef,
   FormEvent,
   useMemo,
 } from "react";
@@ -123,15 +124,17 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const [currentExecutionSteps, setCurrentExecutionSteps] = useState<ExecutionStep[]>([]);
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     if (isAuthenticated && activeWorkspaceId) {
       void loadConversations();
-      const interval = setInterval(() => {
-        if (typeof document !== "undefined" && document.hidden) return;
-        void loadConversations();
-      }, 12000);
-      return () => clearInterval(interval);
+      // Background polling (12s) disabled for now:
+      // const interval = setInterval(() => {
+      //   if (typeof document !== "undefined" && document.hidden) return;
+      //   void loadConversations();
+      // }, 12000);
+      // return () => clearInterval(interval);
     }
   }, [isAuthenticated, activeWorkspaceId]);
 
@@ -266,15 +269,18 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
       // Deduplicate by id — prevents React duplicate-key warning when poll
       // fires while an optimistically-appended message is still in state.
       setMessages((prev) => {
-        const existingIds = new Set(prev.map((m) => m.id));
         const incoming = processedData;
-        // If every incoming id exists already and counts match, keep prev to
-        // avoid a re-render. Otherwise merge: keep any optimistic messages not
-        // yet on the server, then replace with the server list (deduped).
         const seen = new Set<string>();
         const merged: typeof incoming = [];
         for (const m of incoming) {
           if (!seen.has(m.id)) { seen.add(m.id); merged.push(m); }
+        }
+        // Preserve any pending optimistic user messages not yet saved on server
+        for (const m of prev) {
+          if (m.id.startsWith("user-") && !seen.has(m.id)) {
+            merged.push(m);
+            seen.add(m.id);
+          }
         }
         return merged;
       });
@@ -352,10 +358,16 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
     const content = textOverride ?? draft;
     if (!content.trim()) return;
 
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+
     let targetId = conversationIdOverride ?? activeConversationId;
     if (!targetId) {
       const newConv = await createConversation();
-      if (!newConv) return;
+      if (!newConv) {
+        sendingRef.current = false;
+        return;
+      }
       targetId = newConv.id;
     }
 
@@ -376,10 +388,10 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
 
       const currentConv = conversations.find((c) => c.id === targetId);
       if (
-        currentConv &&
-        (currentConv.title.toLowerCase().startsWith("new session") ||
-          currentConv.title.toLowerCase().startsWith("new chat") ||
-          messages.length === 0)
+        !currentConv ||
+        currentConv.title.toLowerCase().startsWith("new session") ||
+        currentConv.title.toLowerCase().startsWith("new chat") ||
+        messages.length === 0
       ) {
         const autoTitle = content.trim().slice(0, 30) + (content.trim().length > 30 ? "..." : "");
         void renameConversation(targetId, autoTitle);
@@ -409,11 +421,16 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
 
       const jobId = response.job_id;
 
-      // Optimistically add user message returned from backend
-      setMessages((prev) => [
-        ...prev.filter((m) => m.id !== userMsgId),
-        response.user_message,
-      ]);
+      // Optimistically add user message returned from backend (deduped by ID)
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === response.user_message.id)) {
+          return prev.filter((m) => m.id !== userMsgId);
+        }
+        return [
+          ...prev.filter((m) => m.id !== userMsgId),
+          response.user_message,
+        ];
+      });
 
       // Start polling the job until completed
       pollJob<{
@@ -472,6 +489,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
           timeoutMs: 120000,
           onTimeout: () => {
             setStatus("Request timed out");
+            sendingRef.current = false;
             setIsSending(false);
           },
           onSucceeded: (result) => {
@@ -546,6 +564,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
                 ];
               });
             }
+            sendingRef.current = false;
             setIsSending(false);
             setStatus("Ready");
             void loadConversations();
@@ -553,6 +572,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
           onFailed: (error) => {
             setStatus(`Failed: ${error}`);
             toast.error(`Request failed: ${error}`);
+            sendingRef.current = false;
             setIsSending(false);
           },
         }
@@ -561,6 +581,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
       const message = error instanceof Error ? error.message : "Request failed";
       setStatus(message);
       toast.error(`Error: ${message}`);
+      sendingRef.current = false;
       setIsSending(false);
     }
   };

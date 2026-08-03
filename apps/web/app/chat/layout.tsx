@@ -597,7 +597,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 value={draft}
                 onChange={(event) => handleInputChange(event.target.value)}
                 placeholder="Type a new message here..."
-                disabled={!activeConversationId || isSending}
+                disabled={isSending}
                 onKeyDown={handleKeyDown}
               />
               <div className="composer-toolbar-right">
@@ -611,7 +611,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 <button
                   type="submit"
                   className="composer-send-btn"
-                  disabled={!activeConversationId || isSending || !draft.trim()}
+                  disabled={isSending || !draft.trim()}
                   title="Send message"
                   style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
                 >

@@ -38,11 +38,12 @@ export default function ChatSessionPage() {
     if (chatId) {
       setActiveConversationId(chatId);
       void loadMessages(token || undefined, chatId);
-      const interval = setInterval(() => {
-        if (typeof document !== "undefined" && document.hidden) return;
-        void loadMessages(token || undefined, chatId);
-      }, 5000);
-      return () => clearInterval(interval);
+      // Background polling (5s) disabled for now:
+      // const interval = setInterval(() => {
+      //   if (typeof document !== "undefined" && document.hidden) return;
+      //   void loadMessages(token || undefined, chatId);
+      // }, 5000);
+      // return () => clearInterval(interval);
     }
   }, [chatId, token]);
 
@@ -89,11 +90,20 @@ export default function ChatSessionPage() {
     },
   };
 
+  const uniqueMessages = React.useMemo(() => {
+    const seen = new Set<string>();
+    return messages.filter((msg) => {
+      if (!msg.id || seen.has(msg.id)) return false;
+      seen.add(msg.id);
+      return true;
+    });
+  }, [messages]);
+
   return (
     <div className="messages-container" style={{ display: "flex", width: "100%" }}>
       <div className="messages" style={{ flex: 1 }}>
 
-        {messages.map((message) => {
+        {uniqueMessages.map((message) => {
           const isAssistant = message.role === "assistant";
           const isCurrentUser = message.user_id
             ? message.user_id === user?.id
@@ -164,7 +174,7 @@ export default function ChatSessionPage() {
                     </ReactMarkdown>
                   </div>
 
-                  {message.tool_name && (
+                  {message.tool_name && message.tool_name !== "current_time" && (
                     <div className="tool-pill" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <span className="tool-icon" style={{ display: "flex", alignItems: "center" }}>
                         <Wrench size={12} />
