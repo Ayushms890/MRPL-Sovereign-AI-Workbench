@@ -19,6 +19,8 @@ type UiContextType = {
   setStatus: (status: string) => void;
   isSending: boolean;
   setIsSending: (sending: boolean) => void;
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
 };
 
 const UiContext = createContext<UiContextType | undefined>(undefined);
@@ -32,6 +34,7 @@ export const UiProvider = ({ children }: { children: React.ReactNode }) => {
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState("Ready");
   const [isSending, setIsSending] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   return (
     <UiContext.Provider
@@ -52,6 +55,8 @@ export const UiProvider = ({ children }: { children: React.ReactNode }) => {
         setStatus,
         isSending,
         setIsSending,
+        searchQuery,
+        setSearchQuery,
       }}
     >
       {children}

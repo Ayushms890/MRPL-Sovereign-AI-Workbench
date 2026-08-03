@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useChat } from "../../chat-context";
 import { useAuth } from "../../contexts/auth-context";
-import { User, Bot, Wrench, Copy, ThumbsUp, ThumbsDown, Share2, PanelRightOpen, Users } from "lucide-react";
+import { User, Bot, Wrench, Copy, ThumbsUp, ThumbsDown, PanelRightOpen, Users, ChevronUp, ChevronDown, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ExecutionTrace } from "../../components/execution-trace";
@@ -13,6 +13,7 @@ import { SpeechPlayer } from "../../components/voice-input";
 import { ArtifactDrawer } from "../../components/artifact-drawer";
 import { ExportShareModal } from "../../components/export-share-modal";
 import { ChartRenderer } from "../../components/chart-renderer";
+import { HighlightText } from "../../components/message-search-highlight";
 
 export default function ChatSessionPage() {
   const params = useParams();
@@ -21,6 +22,7 @@ export default function ChatSessionPage() {
 
   const [artifact, setArtifact] = useState<{ title: string; language: string; content: string } | null>(null);
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
 
   const {
     token,
@@ -30,22 +32,55 @@ export default function ChatSessionPage() {
     currentExecutionSteps,
     setActiveConversationId,
     loadMessages,
+    searchQuery,
+    setSearchQuery,
   } = useChat();
 
   const currentConv = conversations.find((c) => c.id === chatId);
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     if (chatId) {
       setActiveConversationId(chatId);
       void loadMessages(token || undefined, chatId);
-      // Background polling (5s) disabled for now:
-      // const interval = setInterval(() => {
-      //   if (typeof document !== "undefined" && document.hidden) return;
-      //   void loadMessages(token || undefined, chatId);
-      // }, 5000);
-      // return () => clearInterval(interval);
     }
   }, [chatId, token]);
+
+  useEffect(() => {
+    setSearchMatchIndex(0);
+  }, [searchQuery]);
+
+  const uniqueMessages = React.useMemo(() => {
+    const seen = new Set<string>();
+    return messages.filter((msg) => {
+      if (!msg.id || seen.has(msg.id)) return false;
+      seen.add(msg.id);
+      return true;
+    });
+  }, [messages]);
+
+  const matchingIds = React.useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return uniqueMessages
+      .filter((m) => m.content.toLowerCase().includes(q))
+      .map((m) => m.id);
+  }, [uniqueMessages, searchQuery]);
+
+  useEffect(() => {
+    if (matchingIds.length === 0) return;
+    const targetId = matchingIds[searchMatchIndex];
+    const el = messageRefs.current.get(targetId);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [searchMatchIndex, matchingIds]);
+
+  const goPrev = useCallback(() => {
+    setSearchMatchIndex((i) => (i - 1 + matchingIds.length) % matchingIds.length);
+  }, [matchingIds.length]);
+
+  const goNext = useCallback(() => {
+    setSearchMatchIndex((i) => (i + 1) % matchingIds.length);
+  }, [matchingIds.length]);
 
   const renderMarkdownComponents = {
     code({ node, inline, className, children, ...props }: any) {
@@ -90,17 +125,28 @@ export default function ChatSessionPage() {
     },
   };
 
-  const uniqueMessages = React.useMemo(() => {
-    const seen = new Set<string>();
-    return messages.filter((msg) => {
-      if (!msg.id || seen.has(msg.id)) return false;
-      seen.add(msg.id);
-      return true;
-    });
-  }, [messages]);
-
   return (
-    <div className="messages-container" style={{ display: "flex", width: "100%" }}>
+    <div className="messages-container" style={{ display: "flex", width: "100%", flexDirection: "column" }}>
+
+      {searchQuery.trim() && (
+        <div className="search-nav-bar">
+          <span className="search-nav-count">
+            {matchingIds.length === 0
+              ? "No results"
+              : `${searchMatchIndex + 1} of ${matchingIds.length}`}
+          </span>
+          <button type="button" className="search-nav-btn" onClick={goPrev} disabled={matchingIds.length === 0} title="Previous match">
+            <ChevronUp size={13} />
+          </button>
+          <button type="button" className="search-nav-btn" onClick={goNext} disabled={matchingIds.length === 0} title="Next match">
+            <ChevronDown size={13} />
+          </button>
+          <button type="button" className="search-nav-btn search-nav-close" onClick={() => setSearchQuery("")} title="Clear search">
+            <X size={13} />
+          </button>
+        </div>
+      )}
+
       <div className="messages" style={{ flex: 1 }}>
 
         {uniqueMessages.map((message) => {
@@ -108,6 +154,12 @@ export default function ChatSessionPage() {
           const isCurrentUser = message.user_id
             ? message.user_id === user?.id
             : message.role === "user";
+
+          const isMatch = searchQuery.trim()
+            ? message.content.toLowerCase().includes(searchQuery.toLowerCase())
+            : false;
+
+          const isActiveMatch = isMatch && matchingIds[searchMatchIndex] === message.id;
 
           let senderName = "Archimedes";
           if (!isAssistant) {
@@ -121,21 +173,17 @@ export default function ChatSessionPage() {
           return (
             <div
               key={message.id}
+              ref={(el) => {
+                if (el) messageRefs.current.set(message.id, el);
+                else messageRefs.current.delete(message.id);
+              }}
               className={`message-group ${
-                isAssistant
-                  ? "assistant-group"
-                  : isCurrentUser
-                  ? "user-group"
-                  : "teammate-group user-group"
-              }`}
+                isAssistant ? "assistant-group" : isCurrentUser ? "user-group" : "teammate-group user-group"
+              }${isMatch ? " search-match-highlighted" : ""}${isActiveMatch ? " search-match-active" : ""}`}
             >
               <div
                 className={`message-avatar ${
-                  isAssistant
-                    ? "assistant-avatar"
-                    : isCurrentUser
-                    ? "user-avatar"
-                    : "teammate-avatar"
+                  isAssistant ? "assistant-avatar" : isCurrentUser ? "user-avatar" : "teammate-avatar"
                 }`}
                 style={{
                   display: "flex",
@@ -145,13 +193,7 @@ export default function ChatSessionPage() {
                   color: "#ffffff",
                 }}
               >
-                {isAssistant ? (
-                  <Bot size={16} />
-                ) : isCurrentUser ? (
-                  <User size={16} />
-                ) : (
-                  <Users size={16} />
-                )}
+                {isAssistant ? <Bot size={16} /> : isCurrentUser ? <User size={16} /> : <Users size={16} />}
               </div>
 
               <div className="message-bubble-wrapper">
@@ -163,15 +205,21 @@ export default function ChatSessionPage() {
                   <span style={{ fontWeight: 700, color: !isAssistant && !isCurrentUser ? "#0284c7" : undefined }}>
                     {senderName}
                   </span>
-                  
+
                   {isAssistant && message.tool_name === "chart_generator" && message.tool_output && !message.content.includes('"chart_type"') && (
                     <ChartRenderer jsonContent={message.tool_output} />
                   )}
 
                   <div className="message-markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={renderMarkdownComponents}>
-                      {message.content}
-                    </ReactMarkdown>
+                    {searchQuery.trim() && isMatch ? (
+                      <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                        <HighlightText text={message.content} query={searchQuery} />
+                      </div>
+                    ) : (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={renderMarkdownComponents}>
+                        {message.content}
+                      </ReactMarkdown>
+                    )}
                   </div>
 
                   {message.tool_name && message.tool_name !== "current_time" && (
@@ -212,13 +260,9 @@ export default function ChatSessionPage() {
           );
         })}
 
-        {/* Live Job Execution Steps Trace */}
         {isSending && (
           <div className="message-group assistant-group pending-group">
-            <div
-              className="message-avatar assistant-avatar"
-              style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
-            >
+            <div className="message-avatar assistant-avatar" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Bot size={16} />
             </div>
             <div className="message-bubble-wrapper" style={{ width: "100%" }}>
@@ -240,7 +284,6 @@ export default function ChatSessionPage() {
         )}
       </div>
 
-      {/* Artifact Drawer (Claude Split-Screen Canvas) */}
       <ArtifactDrawer
         isOpen={!!artifact}
         onClose={() => setArtifact(null)}
@@ -249,7 +292,6 @@ export default function ChatSessionPage() {
         content={artifact?.content || ""}
       />
 
-      {/* Export & Share Modal */}
       <ExportShareModal
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}

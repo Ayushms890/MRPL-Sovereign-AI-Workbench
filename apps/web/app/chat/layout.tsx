@@ -199,6 +199,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     activeWorkspace,
     myRole,
     switchWorkspace,
+    searchQuery,
+    setSearchQuery,
   } = useChat();
 
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
@@ -540,10 +542,26 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                   </button>
                 )}
                 <div className="header-search-capsule">
-                  <input type="text" placeholder="Search..." />
-                  <span className="search-icon" style={{ display: "flex", alignItems: "center" }}>
-                    <Search size={12} />
-                  </span>
+                  <input
+                    type="text"
+                    placeholder="Search messages..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery(""); }}
+                  />
+                  {searchQuery ? (
+                    <span
+                      className="search-icon"
+                      style={{ display: "flex", alignItems: "center", cursor: "pointer" }}
+                      onClick={() => setSearchQuery("")}
+                    >
+                      <X size={12} />
+                    </span>
+                  ) : (
+                    <span className="search-icon" style={{ display: "flex", alignItems: "center" }}>
+                      <Search size={12} />
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
