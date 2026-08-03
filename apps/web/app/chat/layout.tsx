@@ -462,16 +462,28 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
           
           {/* Top Header Navbar */}
           <header className="chat-header">
-            <div className="header-left">
+            <div className="header-left" style={{ display: "flex", alignItems: "center", gap: 12 }}>
               {isSidebarCollapsed && (
                 <button
                   type="button"
                   className="sidebar-expand-btn"
                   title="Expand Sidebar"
                   onClick={() => setIsSidebarCollapsed(false)}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 32,
+                    height: 32,
+                    padding: 0,
+                    background: "#ffffff",
+                    border: "2px solid #000000",
+                    borderRadius: "6px",
+                    boxShadow: "2px 2px 0px 0px #000000",
+                    cursor: "pointer"
+                  }}
                 >
-                  <Menu size={16} />
+                  <Menu size={16} style={{ color: "#000000" }} />
                 </button>
               )}
               <span className="model-selector">{activeModelLabel}</span>
@@ -479,18 +491,27 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             <div className="header-right">
               {status !== "Ready" && <p className={`status ${status.toLowerCase().includes("fail") || status.toLowerCase().includes("error") ? "error" : ""}`}>{status}</p>}
               <div className="header-tools">
-                <span className="header-warning-icon" title="Archimedes Workspace Alert" style={{ display: "flex", alignItems: "center" }}>
-                  <AlertTriangle size={14} style={{ color: "#eab308" }} />
-                </span>
                 {activeConversationId && (
                   <button
                     type="button"
                     className="header-tool-btn"
                     title="Delete Chat"
                     onClick={() => void deleteConversation(activeConversationId)}
-                    style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 32,
+                      height: 32,
+                      padding: 0,
+                      background: "#ffffff",
+                      border: "2px solid #000000",
+                      borderRadius: "6px",
+                      boxShadow: "2px 2px 0px 0px #000000",
+                      cursor: "pointer"
+                    }}
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={16} style={{ color: "#ef4444" }} />
                   </button>
                 )}
                 {activeConversationId && (
