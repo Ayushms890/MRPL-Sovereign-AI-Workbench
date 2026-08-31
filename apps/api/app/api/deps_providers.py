@@ -10,18 +10,11 @@ from app.api.dependencies import get_current_user
 from app.auth.api_key_repository import UserApiKeyRepository
 from app.auth.encryption import EncryptionService
 from app.auth.provider_resolution import resolve_active_provider, resolve_gemini_api_key
-from app.cache.redis_client import RedisCache, build_redis_cache
-
-
-def get_redis_cache() -> RedisCache | None:
-    return build_redis_cache()
-from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
 from app.core.config import settings
 from app.db import get_db_session
 from app.domain.entities import User
 from app.providers.base import LLMProvider
-from app.providers.caching import CachingLLMProvider
 from app.providers.embeddings.base import EmbeddingProvider
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
 from app.providers.registry import build_provider
@@ -46,11 +39,7 @@ def get_llm_provider(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Your stored {failing_provider.upper()} API key could not be decrypted and needs to be re-saved.",
         ) from exc
-    provider = build_provider(api_key=api_key, provider_name=provider_name)
-    cache = build_redis_cache()
-    if cache is None:
-        return provider
-    return CachingLLMProvider(inner=provider, cache=cache, user_id=current_user.id)
+    return build_provider(api_key=api_key, provider_name=provider_name)
 
 
 def get_embedding_provider(
@@ -82,22 +71,22 @@ def get_retrieval_repository(session: Annotated[Session, Depends(get_db_session)
 
 def get_conversation_repository(
     session: Annotated[Session, Depends(get_db_session)],
-) -> ConversationRepository | CachingConversationRepository:
-    repository = ConversationRepository(session)
-    cache = build_redis_cache()
-    if cache is None:
-        return repository
-    return CachingConversationRepository(inner=repository, cache=cache)
-
-
-def get_redis_cache() -> RedisCache | None:
-    return build_redis_cache()
+) -> ConversationRepository:
+    return ConversationRepository(session)
 
 
 def get_tool_registry(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> ToolRegistry:
     return build_tool_registry(session, force_platform_db=True)
+
+
+def get_redis_cache():
+    """Compatibility shim kept for older tests and legacy code paths.
+
+    MRPL intentionally disables Redis-backed caching and share persistence.
+    """
+    return None
 
 
 def get_agent_registry() -> AgentRegistry:

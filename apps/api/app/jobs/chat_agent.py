@@ -4,15 +4,11 @@ import logging
 from app.agents.graph import MultiAgentGraph
 from app.agents.registry import build_agent_registry
 from app.auth.provider_resolution import resolve_active_provider, resolve_gemini_api_key
-from app.cache.redis_client import build_redis_cache
-from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
 from app.core.config import settings
 from app.db import SessionLocal, get_engine
-from app.jobs.queue import build_job_queue
 from app.infrastructure.models import UserModel
 from app.providers.base import LLMGenerationError, LLMMessage
-from app.providers.caching import CachingLLMProvider
 from app.providers.embeddings.errors import EmbeddingError
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
 from app.providers.registry import build_provider
@@ -30,6 +26,7 @@ def run_chat_agent_job(payload: dict) -> dict:
     session = SessionLocal()
     user_db_session = None
     user_engine = None
+    cache = None
     try:
         conversation_id = payload["conversation_id"]
         user_id = payload["user_id"]
@@ -41,9 +38,7 @@ def run_chat_agent_job(payload: dict) -> dict:
             raise ValueError("User not found")
         preferred_provider = user_model.preferred_provider
 
-        inner_repo = ConversationRepository(session)
-        cache = build_redis_cache()
-        repo = CachingConversationRepository(inner=inner_repo, cache=cache) if cache else inner_repo
+        repo = ConversationRepository(session)
 
         try:
             provider_name, api_key = resolve_active_provider(session, user_id, preferred_provider)
@@ -55,8 +50,6 @@ def run_chat_agent_job(payload: dict) -> dict:
             raise ValueError(f"LLM provider failed: {exc}") from exc
 
         llm_provider = build_provider(api_key=api_key, provider_name=provider_name)
-        if cache is not None:
-            llm_provider = CachingLLMProvider(inner=llm_provider, cache=cache, user_id=user_id)
 
         try:
             gemini_key = resolve_gemini_api_key(session, user_id, preferred_provider)
@@ -88,7 +81,7 @@ def run_chat_agent_job(payload: dict) -> dict:
             except Exception:
                 logger.exception("Failed to connect to user's database")
 
-        conv = inner_repo.get_by_id(conversation_id)
+        conv = repo.get_by_id(conversation_id)
         ws_id = conv.workspace_id if conv else None
 
         agent = MultiAgentGraph(
@@ -112,62 +105,21 @@ def run_chat_agent_job(payload: dict) -> dict:
             conversation_id=conversation_id,
         )
 
-        job_id = payload.get("job_id")
-        queue = build_job_queue()
-        if queue and job_id:
-            queue.add_execution_step(job_id, "planner", "Planner analyzing prompt...", "running")
-
         try:
             result = agent.run(user_input=content, history=history)
-            if queue and job_id:
-                if result.thought_process:
-                    queue.add_execution_step(
-                        job_id,
-                        "thinking",
-                        "Model Reasoning",
-                        "completed",
-                        metadata={"thought": result.thought_process},
-                    )
-                if result.agent_name:
-                    queue.add_execution_step(
-                        job_id,
-                        "specialist",
-                        f"Routed to {result.agent_name.capitalize()} Agent",
-                        "completed",
-                        metadata={"agent_name": result.agent_name},
-                    )
-                if result.tool_name:
-                    queue.add_execution_step(
-                        job_id,
-                        "tool",
-                        f"Executed tool `{result.tool_name}`",
-                        "completed",
-                        metadata={
-                            "tool_name": result.tool_name,
-                            "tool_arguments": result.tool_arguments,
-                            "tool_output": result.tool_output[:200] if result.tool_output else None,
-                        },
-                    )
-                queue.add_execution_step(job_id, "finalize", "Finalized response", "completed")
         except LLMGenerationError as exc:
-            if queue and job_id:
-                queue.add_execution_step(job_id, "error", f"LLM provider failed: {exc}", "failed")
             try:
                 repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: LLM provider failed: {exc}")
             except Exception:
                 pass
             raise ValueError(f"LLM provider failed: {exc}") from exc
         except EmbeddingError as exc:
-            if queue and job_id:
-                queue.add_execution_step(job_id, "error", f"Embedding provider failed: {exc}", "failed")
             try:
                 repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: Embedding provider failed: {exc}")
             except Exception:
                 pass
             raise ValueError(f"Embedding provider failed: {exc}") from exc
         except Exception as exc:
-            if queue and job_id:
-                queue.add_execution_step(job_id, "error", "An unexpected server error occurred.", "failed")
             logger.exception("Unexpected error during agent execution")
             try:
                 repo.add_message(conversation_id=conversation_id, role="assistant", content="Request failed: An unexpected server error occurred.")

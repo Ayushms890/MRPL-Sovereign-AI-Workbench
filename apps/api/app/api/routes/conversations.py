@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.agents.planner import PlannerAgent
 from app.api.dependencies import get_current_user, require_workspace_role
-from app.api.deps_providers import get_conversation_repository, get_planner_agent, get_redis_cache
+from app.api.deps_providers import get_conversation_repository, get_planner_agent
 from app.api.rate_limit_dependencies import rate_limit_by_user
 from app.api.schemas import (
     AgentJobResponse,
@@ -19,11 +19,10 @@ from app.api.schemas import (
     MessageCreateRequest,
     MessageResponse,
 )
-from app.cache.redis_client import RedisCache
 from app.conversations.repository import ConversationRepository
 from app.conversations.summarization import build_effective_history
 from app.domain.entities import Conversation, Message, User
-from app.jobs.queue import build_job_queue, JobQueueError
+from app.jobs.queue import build_job_queue
 
 
 logger = logging.getLogger(__name__)
@@ -77,7 +76,6 @@ def send_message(
     current_user: Annotated[User, Depends(get_current_user)],
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
     _: Annotated[str, Depends(require_workspace_role("owner", "member"))],
-    cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
 ) -> AgentJobResponse:
     _require_conversation(repo, conversation_id)
 
@@ -89,40 +87,8 @@ def send_message(
         user_id=current_user.id,
     )
 
-    queue = build_job_queue()
-    if queue is not None:
-        if cache:
-            lock_key = f"active_chat_job:{conversation_id}"
-            try:
-                existing_job_id = cache.get(lock_key)
-                if existing_job_id:
-                    job = queue.get(existing_job_id)
-                    if job and job.status.value in ["queued", "running"]:
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail="Archimedes is currently answering a query in this conversation. Please wait until it completes.",
-                        )
-            except JobQueueError as exc:
-                logger.error("Error checking existing job status: %s", exc)
-
-        try:
-            job = queue.enqueue(
-                "chat_agent_run",
-                {
-                    "conversation_id": conversation_id,
-                    "user_id": current_user.id,
-                    "user_message_id": user_message.id,
-                    "content": content,
-                },
-            )
-            if cache:
-                cache.set(lock_key, job.id, ttl_seconds=300)
-            return AgentJobResponse(job_id=job.id, status=job.status.value, user_message=_message_response(user_message))
-        except Exception as exc:
-            logger.warning("Queue enqueue failed (%s), falling back to synchronous execution", exc)
-
-    # Fallback: run chat agent synchronously if Redis queue is disabled/failing
     from app.jobs.chat_agent import run_chat_agent_job
+
     fallback_job_id = f"sync_{uuid4().hex[:12]}"
     try:
         run_chat_agent_job({
@@ -133,7 +99,7 @@ def send_message(
             "job_id": fallback_job_id,
         })
     except Exception as exc:
-        logger.exception("Synchronous fallback chat agent run failed: %s", exc)
+        logger.exception("Synchronous chat agent run failed: %s", exc)
 
     return AgentJobResponse(job_id=fallback_job_id, status="succeeded", user_message=_message_response(user_message))
 
@@ -151,7 +117,6 @@ async def stream_message(
     repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
     agent: Annotated[PlannerAgent, Depends(get_planner_agent)],
     _: Annotated[str, Depends(require_workspace_role("owner", "member"))],
-    cache: Annotated[RedisCache | None, Depends(get_redis_cache)] = None,
 ) -> StreamingResponse:
     _require_conversation(repo, conversation_id)
 
@@ -171,7 +136,7 @@ async def stream_message(
         history = build_effective_history(
             messages=all_messages,
             llm_provider=getattr(agent, "llm_provider", None),
-            cache=cache,
+            cache=None,
             conversation_id=conversation_id,
         )
 
@@ -225,38 +190,9 @@ def get_message_job(
     current_user: Annotated[User, Depends(get_current_user)],
     _: Annotated[str, Depends(require_workspace_role("owner", "member", "viewer"))],
 ) -> AgentJobStatusResponse:
-    queue = build_job_queue()
-    if queue is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job queue unavailable.")
-    try:
-        job = queue.get(job_id)
-    except JobQueueError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    if (
-        job is None
-        or job.payload.get("conversation_id") != conversation_id
-    ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-
-    assistant_message = None
-    if job.result is not None:
-        assistant_message = MessageResponse(
-            id=job.result["id"],
-            role=job.result["role"],
-            content=job.result["content"],
-            tool_name=job.result.get("tool_name"),
-            tool_output=job.result.get("tool_output"),
-            agent_name=job.result.get("agent_name"),
-            tool_arguments=job.result.get("tool_arguments"),
-            thought_process=job.result.get("thought_process"),
-            created_at=job.result["created_at"],
-        )
-    return AgentJobStatusResponse(
-        job_id=job.id,
-        status=job.status.value,
-        assistant_message=assistant_message,
-        execution_steps=job.execution_steps,
-        error=job.error,
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Background job tracking is disabled in the MRPL version. Use the synchronous execution path.",
     )
 
 

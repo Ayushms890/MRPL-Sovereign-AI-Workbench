@@ -1,7 +1,6 @@
 import hashlib
 import logging
 
-from app.cache.redis_client import RedisCache
 from app.core.config import settings
 from app.domain.entities import Message
 from app.providers.base import LLMMessage, LLMProvider
@@ -19,7 +18,7 @@ SUMMARY_SYSTEM_PROMPT = (
 def build_effective_history(
     messages: list[Message],
     llm_provider: LLMProvider,
-    cache: RedisCache | None,
+    cache: object | None,
     conversation_id: str,
 ) -> list[LLMMessage]:
     """Returns the message history to send to an agent, summarizing older messages
@@ -41,13 +40,13 @@ def build_effective_history(
 def _get_or_build_summary(
     older: list[Message],
     llm_provider: LLMProvider,
-    cache: RedisCache | None,
+    cache: object | None,
     conversation_id: str,
 ) -> str:
     cache_key = _summary_cache_key(conversation_id, older)
     if cache is not None:
         try:
-            cached = cache.get(cache_key)
+            cached = getattr(cache, "get", lambda *_args, **_kwargs: None)(cache_key)
             if cached is not None:
                 return cached
         except Exception:
@@ -64,7 +63,9 @@ def _get_or_build_summary(
 
     if cache is not None:
         try:
-            cache.set(cache_key, summary_text, settings.history_summary_cache_ttl_seconds)
+            setter = getattr(cache, "set", None)
+            if setter is not None:
+                setter(cache_key, summary_text, settings.history_summary_cache_ttl_seconds)
         except Exception:
             logger.exception("Failed to cache conversation summary")
 

@@ -11,8 +11,9 @@ from app.api.schemas import DocumentCreateRequest, DocumentJobResponse, Document
 from app.db import get_db_session
 from app.domain.entities import User
 from app.infrastructure.models import DocumentModel
+from app.jobs.document_ingestion import run_document_ingestion_job
+from app.jobs.queue import build_job_queue
 from app.providers.embeddings.base import EmbeddingProvider
-from app.jobs.queue import build_job_queue, JobQueueError
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -30,31 +31,20 @@ def create_document(
     resolved_ws_id: Annotated[str, Depends(require_workspace_role("owner", "member"))],
     workspace_id: str | None = None,
 ) -> DocumentJobResponse:
-    queue = build_job_queue()
-    if queue is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Document ingestion requires Redis to be configured (UPSTASH_REDIS_REST_URL/TOKEN).",
-        )
     api_key = getattr(embedding_provider, "api_key", None)
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Embeddings require a Gemini key; save one in BYOK settings.",
         )
-    try:
-        job = queue.enqueue(
-            "document_ingestion",
-            {
-                "user_id": current_user.id,
-                "workspace_id": resolved_ws_id,
-                "title": payload.title.strip(),
-                "content": payload.content,
-            },
-        )
-    except JobQueueError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    return DocumentJobResponse(job_id=job.id, status=job.status.value)
+
+    result = run_document_ingestion_job({
+        "user_id": current_user.id,
+        "workspace_id": resolved_ws_id,
+        "title": payload.title.strip(),
+        "content": payload.content,
+    })
+    return DocumentJobResponse(job_id=f"sync_{result['document_id']}", status="succeeded")
 
 
 @router.get("/jobs/{job_id}", response_model=DocumentJobStatusResponse)
@@ -62,17 +52,9 @@ def get_document_job(
     job_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> DocumentJobStatusResponse:
-    queue = build_job_queue()
-    if queue is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job queue unavailable.")
-    try:
-        job = queue.get(job_id)
-    except JobQueueError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    if job is None or job.payload.get("user_id") != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return DocumentJobStatusResponse(
-        job_id=job.id, status=job.status.value, result=job.result, error=job.error
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Background job tracking is disabled in the MRPL version. Use the synchronous document ingestion path.",
     )
 
 

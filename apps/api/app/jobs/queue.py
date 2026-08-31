@@ -18,8 +18,15 @@ class JobQueueError(RuntimeError):
 
 class JobQueue:
     def __init__(self, url: str, token: str) -> None:
-        from upstash_redis import Redis
-        self.client = Redis(url=url, token=token)
+        self.url = url
+        self.token = token
+        self.client = None
+        try:
+            from upstash_redis import Redis  # type: ignore
+
+            self.client = Redis(url=url, token=token)
+        except Exception:
+            self.client = None
 
     def enqueue(self, job_type: str, payload: dict) -> Job:
         job = Job(
@@ -129,7 +136,7 @@ class JobQueue:
 
 
 def build_job_queue() -> JobQueue | None:
-    if not settings.upstash_redis_rest_url or not settings.upstash_redis_rest_token:
+    if not getattr(settings, "upstash_redis_rest_url", "") or not getattr(settings, "upstash_redis_rest_token", ""):
         return None
     try:
         return JobQueue(url=settings.upstash_redis_rest_url, token=settings.upstash_redis_rest_token)

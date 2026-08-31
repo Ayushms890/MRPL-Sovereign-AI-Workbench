@@ -24,10 +24,10 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     tavily_api_key: str = ""
     llm_max_output_tokens: int = 2048
-    upstash_redis_rest_url: str = ""
-    upstash_redis_rest_token: str = ""
     llm_cache_ttl_seconds: int = 3600
     conversation_cache_ttl_seconds: int = 300
+    upstash_redis_rest_url: str = ""
+    upstash_redis_rest_token: str = ""
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     frontend_origin: str = "http://localhost:3000"

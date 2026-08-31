@@ -13,8 +13,7 @@ The current foundation rules are intentionally strict:
 - One active LLM provider behind an abstraction layer
 - LangGraph orchestrates Planner, Research, and Knowledge agents
 - JWT auth only
-- Upstash Redis REST caching for LLM responses and conversation histories
-- Redis-backed job queue for asynchronous document ingestion
+- No external Redis dependency; async jobs are intentionally removed from this MRPL config
 - No external vector DB, Docker Compose used for AWS EC2 backend deployment (local dev runs bare processes), no complex observability stack
 
 The backend is structured for clean architecture so later agents, retrieval, caching, and external services can be added without a rewrite.
@@ -46,8 +45,6 @@ LLM_PROVIDER=gemini
 LLM_MODEL=gemini-3.5-flash
 LLM_API_KEY=your-gemini-api-key
 LLM_MAX_OUTPUT_TOKENS=2048
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
 LLM_CACHE_TTL_SECONDS=3600
 CONVERSATION_CACHE_TTL_SECONDS=300
 EMBEDDING_MODEL=gemini-embedding-001
@@ -138,7 +135,7 @@ npm run dev
 ```
 
 > [!IMPORTANT]
-> `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are now **required** (not optional) for all chat and document-upload/ingestion features, as all agent runs and document ingestion operations rely on the Redis-backed job queue. LLM caching remains optional.
+> This MRPL build intentionally does not use Redis or Upstash. Background work is disabled in this minimal configuration.
 
 Open `http://localhost:3000`, register a user, create a conversation, and send a planner request. The graph can answer directly or route to Research. Tool calls are recorded in `tool_calls`, including the agent that invoked the tool.
 
