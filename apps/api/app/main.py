@@ -14,6 +14,7 @@ from app.api.routes.workspaces import router as workspaces_router
 from app.core.config import settings
 from app.core.logging_config import configure_logging, request_id_var
 from app.core.tracing import configure_langsmith
+from app.inngest import register_inngest
 from app.migrations import run_migrations
 
 import uuid
@@ -60,4 +61,5 @@ app.include_router(conversations_router)
 app.include_router(documents_router)
 app.include_router(users_router)
 app.include_router(share_router)
+register_inngest(app)
 
