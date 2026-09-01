@@ -109,6 +109,13 @@ class RetrievalRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def _release_read_transaction(self) -> None:
+        try:
+            if self.session.in_transaction():
+                self.session.rollback()
+        except Exception:
+            pass
+
     def get_document(self, document_id: str) -> Document | None:
         doc = self.session.get(DocumentModel, document_id)
         if not doc:
@@ -135,11 +142,30 @@ class RetrievalRepository:
             else (DocumentModel.user_id == user_id)
         )
 
-        if self.session.bind and self.session.bind.dialect.name == "sqlite":
-            chunks = self.session.scalars(
-                select(DocumentChunkModel)
+        try:
+            if self.session.bind and self.session.bind.dialect.name == "sqlite":
+                chunks = self.session.scalars(
+                    select(DocumentChunkModel)
+                    .join(DocumentModel, DocumentChunkModel.document_id == DocumentModel.id)
+                    .where(stmt_where)
+                    .limit(limit)
+                ).all()
+                return [
+                    RetrievedChunk(
+                        id=chunk.id,
+                        document_id=chunk.document_id,
+                        content=chunk.content,
+                        score=0.1,
+                    )
+                    for chunk in chunks
+                ]
+
+            distance = DocumentChunkModel.embedding.cosine_distance(embedding).label("score")
+            rows = self.session.execute(
+                select(DocumentChunkModel, distance)
                 .join(DocumentModel, DocumentChunkModel.document_id == DocumentModel.id)
                 .where(stmt_where)
+                .order_by(distance)
                 .limit(limit)
             ).all()
             return [
@@ -147,28 +173,12 @@ class RetrievalRepository:
                     id=chunk.id,
                     document_id=chunk.document_id,
                     content=chunk.content,
-                    score=0.1,
+                    score=float(score),
                 )
-                for chunk in chunks
+                for chunk, score in rows
             ]
-
-        distance = DocumentChunkModel.embedding.cosine_distance(embedding).label("score")
-        rows = self.session.execute(
-            select(DocumentChunkModel, distance)
-            .join(DocumentModel, DocumentChunkModel.document_id == DocumentModel.id)
-            .where(stmt_where)
-            .order_by(distance)
-            .limit(limit)
-        ).all()
-        return [
-            RetrievedChunk(
-                id=chunk.id,
-                document_id=chunk.document_id,
-                content=chunk.content,
-                score=float(score),
-            )
-            for chunk, score in rows
-        ]
+        finally:
+            self._release_read_transaction()
 
     def create(
         self,

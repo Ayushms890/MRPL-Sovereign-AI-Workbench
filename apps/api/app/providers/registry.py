@@ -3,17 +3,20 @@ from app.providers.base import LLMProvider
 from app.providers.fallback import FallbackLLMProvider
 from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
+from app.providers.nvidia import NvidiaNimProvider
 
-ProviderFactory = type[GeminiProvider] | type[GroqProvider]
+ProviderFactory = type[GeminiProvider] | type[GroqProvider] | type[NvidiaNimProvider]
 
 PROVIDERS: dict[str, ProviderFactory] = {
     "gemini": GeminiProvider,
     "groq": GroqProvider,
+    "nvidia": NvidiaNimProvider,
 }
 
 DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini-3.5-flash",
     "groq": "llama-3.1-8b-instant",
+    "nvidia": "meta/llama-3.1-70b-instruct",
 }
 
 GEMINI_FALLBACK_MODELS: list[str] = [
@@ -35,9 +38,12 @@ def build_provider(
         supported = ", ".join(sorted(PROVIDERS))
         raise ValueError(f"Unsupported LLM_PROVIDER={provider_name!r}. Supported providers: {supported}.")
 
-    selected_model = model or settings.llm_model
-    if provider_name != settings.llm_provider and model is None:
-        selected_model = DEFAULT_MODELS[provider_name]
+    if model and model.strip():
+        selected_model = model.strip()
+    elif provider_name != settings.llm_provider:
+        selected_model = DEFAULT_MODELS.get(provider_name, settings.llm_model)
+    else:
+        selected_model = settings.llm_model
 
     effective_key = api_key if api_key is not None else settings.llm_api_key
     primary_provider = provider_class(api_key=effective_key, model=selected_model)

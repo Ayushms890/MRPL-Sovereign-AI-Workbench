@@ -181,6 +181,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     documents,
     configuredProviders,
     preferredProvider,
+    preferredModel,
+    setPreferredModel,
+    updatePreferences,
+    chunkSize,
+    setChunkSize,
+    chunkOverlap,
+    setChunkOverlap,
     editingConversationId,
     setEditingConversationId,
     editingTitle,
@@ -204,6 +211,23 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   } = useChat();
 
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
+  const [activeSwitchProvider, setActiveSwitchProvider] = useState<"gemini" | "groq" | "nvidia">(
+    ((preferredProvider as any) as "gemini" | "groq" | "nvidia") || "nvidia"
+  );
+  const [customModelInput, setCustomModelInput] = useState<string>(preferredModel || "");
+  const [isApplyingPreferences, setIsApplyingPreferences] = useState(false);
+
+  useEffect(() => {
+    if (preferredProvider) {
+      setActiveSwitchProvider(preferredProvider as "gemini" | "groq" | "nvidia");
+    }
+  }, [preferredProvider]);
+
+  useEffect(() => {
+    if (preferredModel !== null && preferredModel !== undefined) {
+      setCustomModelInput(preferredModel);
+    }
+  }, [preferredModel]);
 
   const scrollViewportRef = React.useRef<HTMLDivElement>(null);
 
@@ -715,20 +739,190 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
               {/* API Keys Tab */}
               {activeSettingsTab === "keys" && (
                 <div className="modal-tab-panel">
-                  <h2>API Keys (BYOK)</h2>
+                  <h2>Model & API Configuration</h2>
                   <p className="tab-description">
-                    Configure your credentials for model adapters. Your keys are stored encrypted locally.
+                    Switch between NVIDIA NIM, Google Gemini, and Groq, customize models, and manage your BYOK API keys.
                   </p>
+
+                  {/* Active Provider & Custom Model Switcher */}
+                  <div style={{ marginBottom: "24px", padding: "16px", background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "10px" }}>
+                    <h4 style={{ margin: "0 0 12px", fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
+                      Active LLM Provider & Model Selection
+                    </h4>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+                      {[
+                        { id: "nvidia", label: "NVIDIA NIM", desc: "Llama 3.3, Minimax, DeepSeek, Mistral" },
+                        { id: "gemini", label: "Google Gemini", desc: "Gemini 3.5 Flash, 2.5 Flash" },
+                        { id: "groq", label: "Groq Client", desc: "Llama 3.3 70B, Instant" },
+                      ].map((prov) => {
+                        const isSelected = activeSwitchProvider === prov.id;
+                        return (
+                          <button
+                            key={prov.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveSwitchProvider(prov.id as any);
+                              if (prov.id === "nvidia" && (!customModelInput || customModelInput.startsWith("gemini") || customModelInput.startsWith("llama-3.1"))) {
+                                setCustomModelInput("meta/llama-3.3-70b-instruct");
+                              } else if (prov.id === "gemini" && (!customModelInput || customModelInput.includes("/"))) {
+                                setCustomModelInput("gemini-3.5-flash");
+                              } else if (prov.id === "groq" && (!customModelInput || customModelInput.includes("/"))) {
+                                setCustomModelInput("llama-3.3-70b-versatile");
+                              }
+                            }}
+                            style={{
+                              padding: "10px",
+                              border: isSelected ? "2px solid #3b82f6" : "1px solid #e2e8f0",
+                              background: isSelected ? "#eff6ff" : "#f8fafc",
+                              borderRadius: "8px",
+                              textAlign: "left",
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                            }}
+                          >
+                            <div style={{ fontWeight: 600, fontSize: "0.85rem", color: isSelected ? "#1d4ed8" : "#0f172a" }}>
+                              {prov.label}
+                            </div>
+                            <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: "2px" }}>
+                              {prov.desc}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                        Selected Model Name
+                        <input
+                          type="text"
+                          value={customModelInput}
+                          onChange={(e) => setCustomModelInput(e.target.value)}
+                          placeholder={
+                            activeSwitchProvider === "nvidia"
+                              ? "e.g. minimaxai/minimax-01 or meta/llama-3.3-70b-instruct"
+                              : activeSwitchProvider === "groq"
+                              ? "e.g. llama-3.3-70b-versatile"
+                              : "e.g. gemini-3.5-flash"
+                          }
+                          style={{
+                            width: "100%",
+                            padding: "8px 12px",
+                            marginTop: "4px",
+                            borderRadius: "6px",
+                            border: "1px solid #cbd5e1",
+                            fontSize: "0.85rem",
+                          }}
+                        />
+                      </label>
+
+                      {/* Quick Suggestion Chips */}
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
+                        <span style={{ fontSize: "0.75rem", color: "#64748b" }}>Quick Suggestions:</span>
+                        {activeSwitchProvider === "nvidia" && (
+                          <>
+                            {["minimaxai/minimax-01", "minimaxai/minimax-m3", "meta/llama-3.1-70b-instruct", "deepseek-ai/deepseek-r1", "mistralai/mistral-large-2-instruct", "qwen/qwen-2.5-72b-instruct"].map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setCustomModelInput(m)}
+                                style={{
+                                  fontSize: "0.72rem",
+                                  padding: "2px 8px",
+                                  background: customModelInput === m ? "#dbeafe" : "#f1f5f9",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: "4px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {activeSwitchProvider === "gemini" && (
+                          <>
+                            {["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"].map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setCustomModelInput(m)}
+                                style={{
+                                  fontSize: "0.72rem",
+                                  padding: "2px 8px",
+                                  background: customModelInput === m ? "#dbeafe" : "#f1f5f9",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: "4px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {activeSwitchProvider === "groq" && (
+                          <>
+                            {["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"].map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setCustomModelInput(m)}
+                                style={{
+                                  fontSize: "0.72rem",
+                                  padding: "2px 8px",
+                                  background: customModelInput === m ? "#dbeafe" : "#f1f5f9",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: "4px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "6px" }}>
+                        <button
+                          type="button"
+                          disabled={isApplyingPreferences}
+                          onClick={async () => {
+                            setIsApplyingPreferences(true);
+                            try {
+                              await updatePreferences(activeSwitchProvider, customModelInput.trim() || null);
+                            } finally {
+                              setIsApplyingPreferences(false);
+                            }
+                          }}
+                          style={{
+                            padding: "8px 16px",
+                            background: "#0f172a",
+                            color: "#ffffff",
+                            borderRadius: "6px",
+                            fontSize: "0.82rem",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {isApplyingPreferences ? "Applying..." : "Apply Active Provider & Model"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
 
                   <div className="settings-layout">
                     <form className="api-key-panel-modal" onSubmit={saveApiKey}>
+                      <h4 style={{ margin: "0 0 8px", fontSize: "0.9rem", fontWeight: 700, color: "#0f172a" }}>Save Provider API Key</h4>
                       <label>
                         LLM Provider
                         <select
                           value={apiKeyProvider}
-                          onChange={(event) => setApiKeyProvider(event.target.value as "gemini" | "groq")}
+                          onChange={(event) => setApiKeyProvider(event.target.value as any)}
                           disabled={isSavingApiKey}
                         >
+                          <option value="nvidia">NVIDIA NIM</option>
                           <option value="gemini">Google Gemini</option>
                           <option value="groq">Groq Client</option>
                         </select>
@@ -739,7 +933,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                           type="password"
                           value={apiKeyValue}
                           onChange={(event) => setApiKeyValue(event.target.value)}
-                          placeholder={`Paste ${apiKeyProvider.toUpperCase()} api key`}
+                          placeholder={
+                            apiKeyProvider === "nvidia"
+                              ? "Paste NVIDIA NIM API key (nvapi-...)"
+                              : apiKeyProvider === "groq"
+                              ? "Paste Groq API key (gsk_...)"
+                              : "Paste Google Gemini API key (AIza...)"
+                          }
                           autoComplete="off"
                           disabled={isSavingApiKey}
                         />
@@ -757,6 +957,28 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                     <div className="key-status-list">
                       <h4>Connection Checklist</h4>
                       <div className="key-checklist">
+                        {/* NVIDIA NIM */}
+                        <div className="checklist-item">
+                          <div className="provider-status-info">
+                            <span className={`status-dot ${configuredProviders.includes("nvidia") ? "active" : ""}`}></span>
+                            <div>
+                              <h5>NVIDIA NIM</h5>
+                              <span>{configuredProviders.includes("nvidia") ? "Active" : "Not Found"}</span>
+                            </div>
+                          </div>
+                          {configuredProviders.includes("nvidia") && (
+                            <button
+                              type="button"
+                              className="ghost btn-delete-key"
+                              onClick={() => deleteApiKey("nvidia")}
+                              disabled={isSavingApiKey}
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Google Gemini */}
                         <div className="checklist-item">
                           <div className="provider-status-info">
                             <span className={`status-dot ${configuredProviders.includes("gemini") ? "active" : ""}`}></span>
@@ -777,6 +999,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                           )}
                         </div>
 
+                        {/* Groq Client */}
                         <div className="checklist-item">
                           <div className="provider-status-info">
                             <span className={`status-dot ${configuredProviders.includes("groq") ? "active" : ""}`}></span>
@@ -807,7 +1030,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 <div className="modal-tab-panel">
                   <h2>Knowledge Hub (RAG)</h2>
                   <p className="tab-description">
-                    Upload documents to index into your personal retrieval-augmented memory.
+                    Upload documents to index into your personal retrieval-augmented memory with customizable chunking.
                   </p>
                   <div className="settings-layout">
                     <form className="knowledge-panel-modal" onSubmit={uploadDocument}>
@@ -831,6 +1054,37 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                           required
                         />
                       </label>
+
+                      {/* RAG Chunking Parameters */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", background: "#f8fafc", padding: "10px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                        <label style={{ fontSize: "0.8rem", margin: 0 }}>
+                          Chunk Size ({chunkSize} chars)
+                          <input
+                            type="number"
+                            min={200}
+                            max={4000}
+                            step={100}
+                            value={chunkSize}
+                            onChange={(e) => setChunkSize(parseInt(e.target.value) || 1200)}
+                            disabled={isUploadingDocument}
+                            style={{ width: "100%", padding: "6px 8px", marginTop: "4px", fontSize: "0.8rem" }}
+                          />
+                        </label>
+                        <label style={{ fontSize: "0.8rem", margin: 0 }}>
+                          Overlap ({chunkOverlap} chars)
+                          <input
+                            type="number"
+                            min={0}
+                            max={500}
+                            step={50}
+                            value={chunkOverlap}
+                            onChange={(e) => setChunkOverlap(parseInt(e.target.value) || 200)}
+                            disabled={isUploadingDocument}
+                            style={{ width: "100%", padding: "6px 8px", marginTop: "4px", fontSize: "0.8rem" }}
+                          />
+                        </label>
+                      </div>
+
                       <button type="submit" disabled={isUploadingDocument || !documentTitle.trim() || !documentContent.trim()}>
                         {isUploadingDocument ? "Embedding document chunks..." : "Index Document"}
                       </button>

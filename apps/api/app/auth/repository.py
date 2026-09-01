@@ -84,6 +84,18 @@ class UserRepository:
         self.session.refresh(user)
         return self._to_entity(user)
 
+    def set_preferences(self, user_id: str, provider: str | None = None, model: str | None = None) -> User | None:
+        user = self.session.get(UserModel, user_id)
+        if user is None:
+            return None
+        if provider is not None:
+            user.preferred_provider = provider.lower() if provider else None
+        if model is not None:
+            user.preferred_model = model.strip() if model.strip() else None
+        self.session.commit()
+        self.session.refresh(user)
+        return self._to_entity(user)
+
     @staticmethod
     def _to_entity(user: UserModel) -> User:
         return User(
@@ -95,4 +107,5 @@ class UserRepository:
             updatedAt=user.updatedAt,
             image=user.image,
             preferred_provider=user.preferred_provider,
+            preferred_model=user.preferred_model,
         )

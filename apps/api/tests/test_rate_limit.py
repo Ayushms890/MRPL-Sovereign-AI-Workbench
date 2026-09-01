@@ -78,7 +78,10 @@ def test_rate_limit_send_message_user_integration(
         status = JobStatus.QUEUED
 
     class FakeJobQueue:
-        def enqueue(self, *args, **kwargs):
+        def create_job(self, *args, **kwargs):
+            return FakeJob()
+
+        def enqueue_existing(self, *args, **kwargs):
             return FakeJob()
 
     monkeypatch.setattr("app.api.routes.conversations.build_job_queue", lambda: FakeJobQueue())

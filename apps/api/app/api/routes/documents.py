@@ -8,6 +8,7 @@ from app.api.dependencies import get_current_user, require_workspace_role
 from app.api.deps_providers import get_embedding_provider
 from app.api.rate_limit_dependencies import rate_limit_by_user
 from app.api.schemas import DocumentCreateRequest, DocumentJobResponse, DocumentJobStatusResponse, DocumentResponse
+from app.core.config import settings
 from app.db import get_db_session
 from app.domain.entities import User
 from app.infrastructure.models import DocumentModel
@@ -15,6 +16,19 @@ from app.providers.embeddings.base import EmbeddingProvider
 from app.jobs.queue import build_job_queue, JobQueueError
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _send_inngest_event(name: str, data: dict) -> bool:
+    if settings.environment == "test":
+        return False
+    try:
+        import inngest
+        from app.inngest.client import inngest_client
+
+        inngest_client.send_sync(inngest.Event(name=name, data=data))
+        return True
+    except Exception:
+        return False
 
 
 @router.post(
@@ -30,31 +44,45 @@ def create_document(
     resolved_ws_id: Annotated[str, Depends(require_workspace_role("owner", "member"))],
     workspace_id: str | None = None,
 ) -> DocumentJobResponse:
-    queue = build_job_queue()
-    if queue is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Document ingestion requires Redis to be configured (UPSTASH_REDIS_REST_URL/TOKEN).",
-        )
     api_key = getattr(embedding_provider, "api_key", None)
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Embeddings require a Gemini key; save one in BYOK settings.",
         )
+
+    doc_payload = {
+        "user_id": current_user.id,
+        "workspace_id": resolved_ws_id,
+        "title": payload.title.strip(),
+        "content": payload.content,
+        "chunk_size": payload.chunk_size,
+        "overlap": payload.overlap,
+    }
+
+    queue = build_job_queue()
+    if queue is not None:
+        try:
+            from uuid import uuid4
+
+            job_id = str(uuid4())
+            doc_payload = {**doc_payload, "job_id": job_id}
+            job = queue.create_job("document_ingestion", doc_payload, job_id=job_id)
+            dispatched_to_inngest = _send_inngest_event("ai-os/document.uploaded", doc_payload)
+            if not dispatched_to_inngest:
+                queue.enqueue_existing(job.id)
+            return DocumentJobResponse(job_id=job.id, status=job.status.value)
+        except Exception:
+            pass
+
+    from uuid import uuid4
+    from app.jobs.document_ingestion import run_document_ingestion_job
+    fallback_job_id = f"sync_doc_{uuid4().hex[:12]}"
     try:
-        job = queue.enqueue(
-            "document_ingestion",
-            {
-                "user_id": current_user.id,
-                "workspace_id": resolved_ws_id,
-                "title": payload.title.strip(),
-                "content": payload.content,
-            },
-        )
-    except JobQueueError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-    return DocumentJobResponse(job_id=job.id, status=job.status.value)
+        run_document_ingestion_job(doc_payload)
+        return DocumentJobResponse(job_id=fallback_job_id, status="succeeded")
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Document ingestion failed: {exc}") from exc
 
 
 @router.get("/jobs/{job_id}", response_model=DocumentJobStatusResponse)

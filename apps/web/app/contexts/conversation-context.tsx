@@ -411,7 +411,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
       ]);
 
       // Post message and retrieve job details
-      const response = await api<{ job_id: string; status: string; user_message: Message }>(
+      const response = await api<{ job_id: string; status: string; user_message: Message; assistant_message?: Message | null }>(
         `/conversations/${targetId}/messages`,
         {
           method: "POST",
@@ -431,6 +431,77 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
           response.user_message,
         ];
       });
+
+      if (response.assistant_message) {
+        const result = response.assistant_message;
+        const timestamp = result.created_at || new Date().toISOString();
+        const finalSteps: ExecutionStep[] = [
+          {
+            step: "planner",
+            label: "Planner analyzed prompt",
+            status: "completed",
+            timestamp,
+          },
+        ];
+
+        if (result.thought_process) {
+          finalSteps.push({
+            step: "thinking",
+            label: "Model Reasoning",
+            status: "completed",
+            timestamp,
+            metadata: { thought: result.thought_process },
+          });
+        }
+
+        if (result.agent_name) {
+          finalSteps.push({
+            step: "specialist",
+            label: `Routed to ${result.agent_name.charAt(0).toUpperCase() + result.agent_name.slice(1)} Agent`,
+            status: "completed",
+            timestamp,
+            metadata: { agent_name: result.agent_name },
+          });
+        }
+
+        if (result.tool_name) {
+          finalSteps.push({
+            step: "tool",
+            label: `Executed tool \`${result.tool_name}\``,
+            status: "completed",
+            timestamp,
+            metadata: {
+              tool_name: result.tool_name,
+              tool_arguments: result.tool_arguments,
+              tool_output: result.tool_output,
+            },
+          });
+        }
+
+        finalSteps.push({
+          step: "finalize",
+          label: "Finalized response",
+          status: "completed",
+          timestamp,
+        });
+
+        setCurrentExecutionSteps(finalSteps);
+        setMessages((current) => {
+          if (current.some((m) => m.id === result.id)) return current;
+          return [
+            ...current,
+            {
+              ...result,
+              execution_steps: finalSteps,
+            },
+          ];
+        });
+        sendingRef.current = false;
+        setIsSending(false);
+        setStatus("Ready");
+        void loadConversations();
+        return;
+      }
 
       // Start polling the job until completed
       pollJob<{
@@ -486,7 +557,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         },
         {
           intervalMs: 1500,
-          timeoutMs: 120000,
+          timeoutMs: 600000,
           onTimeout: () => {
             setStatus("Request timed out");
             sendingRef.current = false;

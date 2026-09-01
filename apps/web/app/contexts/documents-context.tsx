@@ -22,6 +22,10 @@ type DocumentsContextType = {
   setDocumentTitle: (title: string) => void;
   documentContent: string;
   setDocumentContent: (content: string) => void;
+  chunkSize: number;
+  setChunkSize: (size: number) => void;
+  chunkOverlap: number;
+  setChunkOverlap: (overlap: number) => void;
   documentStatus: string;
   setDocumentStatus: (status: string) => void;
   isUploadingDocument: boolean;
@@ -43,6 +47,8 @@ export const DocumentsProvider = ({ children }: { children: React.ReactNode }) =
   const [documents, setDocuments] = useState<DocumentBase[]>([]);
   const [documentTitle, setDocumentTitle] = useState("");
   const [documentContent, setDocumentContent] = useState("");
+  const [chunkSize, setChunkSize] = useState<number>(1200);
+  const [chunkOverlap, setChunkOverlap] = useState<number>(200);
   const [documentStatus, setDocumentStatus] = useState("No knowledge uploaded");
   const [isUploadingDocument, setIsUploadingDocument] = useState(false);
 
@@ -101,7 +107,12 @@ export const DocumentsProvider = ({ children }: { children: React.ReactNode }) =
     try {
       const response = await api<{ job_id: string; status: string }>(`/documents?workspace_id=${activeWorkspaceId}`, {
         method: "POST",
-        body: JSON.stringify({ title: documentTitle.trim(), content: documentContent.trim() }),
+        body: JSON.stringify({
+          title: documentTitle.trim(),
+          content: documentContent.trim(),
+          chunk_size: chunkSize,
+          overlap: chunkOverlap,
+        }),
       });
 
       const jobId = response.job_id;
@@ -172,6 +183,10 @@ export const DocumentsProvider = ({ children }: { children: React.ReactNode }) =
         setDocumentTitle,
         documentContent,
         setDocumentContent,
+        chunkSize,
+        setChunkSize,
+        chunkOverlap,
+        setChunkOverlap,
         documentStatus,
         setDocumentStatus,
         isUploadingDocument,

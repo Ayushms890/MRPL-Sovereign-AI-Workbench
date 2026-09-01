@@ -110,6 +110,10 @@ When enabled, traces will include both LangGraph-level routing decisions and the
 
 ## Local Development:
 
+Run local development with three terminals: backend API, Inngest dev server, and frontend.
+
+### 1. Backend API
+
 ```powershell
 cd apps/api
 uv venv
@@ -121,20 +125,57 @@ uvicorn app.main:app --reload
 
 The API also runs `alembic upgrade head` on startup unless `ENVIRONMENT=test`.
 
-Run the background worker:
+The backend listens on `http://localhost:8000` and serves Inngest functions at:
 
-```powershell
-cd apps/api
-.\.venv\Scripts\Activate.ps1
-python -m app.worker
+```text
+http://localhost:8000/api/inngest
 ```
 
-Run the frontend:
+### 2. Inngest Dev Server
+
+Start this after the backend is running:
+
+```powershell
+npx --ignore-scripts=false inngest-cli@latest dev --no-discovery -u http://localhost:8000/api/inngest
+```
+
+Open the Inngest dashboard at:
+
+```text
+http://localhost:8288
+```
+
+You should see the `ai-os-api` app and these functions:
+
+```text
+chat-agent-run
+document-ingestion
+```
+
+When chat or document requests are sent from the UI, the backend creates a Redis job for the UI to poll, dispatches the event to Inngest, and the Inngest function updates that same job to `running`, `succeeded`, or `failed`.
+
+### 3. Frontend
 
 ```powershell
 cd apps/web
 npm install
 npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+### Optional Worker Fallback
+
+If you are not running the Inngest dev server, run the Redis queue worker instead:
+
+```powershell
+cd apps/api
+.\.venv\Scripts\Activate.ps1
+python -m app.worker
 ```
 
 > [!IMPORTANT]

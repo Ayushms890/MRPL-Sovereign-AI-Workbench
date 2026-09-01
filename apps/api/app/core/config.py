@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.5-flash"
     llm_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     tavily_api_key: str = ""
     llm_max_output_tokens: int = 2048
     upstash_redis_rest_url: str = ""
@@ -30,6 +31,12 @@ class Settings(BaseSettings):
     conversation_cache_ttl_seconds: int = 300
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
+    default_chunk_size: int = 1200
+    default_chunk_overlap: int = 200
+    inngest_app_id: str = "ai-os-api"
+    inngest_event_key: str = ""
+    inngest_signing_key: str = ""
+    inngest_is_dev: bool = True
     frontend_origin: str = "http://localhost:3000"
     encryption_key: str = ""       # deprecated single-key fallback, still supported
     encryption_keys: str = ""      # comma-separated, newest/primary key first

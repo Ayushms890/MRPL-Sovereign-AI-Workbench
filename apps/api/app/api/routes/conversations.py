@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
@@ -22,6 +23,7 @@ from app.api.schemas import (
 from app.cache.redis_client import RedisCache
 from app.conversations.repository import ConversationRepository
 from app.conversations.summarization import build_effective_history
+from app.core.config import settings
 from app.domain.entities import Conversation, Message, User
 from app.jobs.queue import build_job_queue, JobQueueError
 
@@ -29,6 +31,34 @@ from app.jobs.queue import build_job_queue, JobQueueError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+
+def _send_inngest_event(name: str, data: dict) -> bool:
+    if settings.environment == "test":
+        return False
+    try:
+        import inngest
+        from app.inngest.client import inngest_client
+
+        inngest_client.send_sync(inngest.Event(name=name, data=data))
+        return True
+    except Exception as exc:
+        logger.info("Inngest dispatch failed for %s; falling back when possible: %s", name, exc)
+        return False
+
+
+def _job_result_message_response(result: dict) -> MessageResponse:
+    return MessageResponse(
+        id=result["id"],
+        role=result["role"],
+        content=result["content"],
+        tool_name=result.get("tool_name"),
+        tool_output=result.get("tool_output"),
+        agent_name=result.get("agent_name"),
+        tool_arguments=result.get("tool_arguments"),
+        thought_process=result.get("thought_process"),
+        created_at=result["created_at"],
+    )
 
 
 @router.get("", response_model=list[ConversationResponse])
@@ -89,15 +119,27 @@ def send_message(
         user_id=current_user.id,
     )
 
+    chat_payload = {
+        "conversation_id": conversation_id,
+        "user_id": current_user.id,
+        "user_message_id": user_message.id,
+        "content": content,
+    }
+
     queue = build_job_queue()
     if queue is not None:
+        lock_key = f"active_chat_job:{conversation_id}"
+        lock_claimed = False
         if cache:
-            lock_key = f"active_chat_job:{conversation_id}"
             try:
-                existing_job_id = cache.get(lock_key)
-                if existing_job_id:
-                    job = queue.get(existing_job_id)
-                    if job and job.status.value in ["queued", "running"]:
+                lock_claimed = cache.set_if_not_exists(lock_key, "pending", ttl_seconds=300)
+                if not lock_claimed:
+                    existing_job_id = cache.get(lock_key)
+                    job = queue.get(existing_job_id) if existing_job_id else None
+                    if job is None or job.status.value not in ["queued", "running"]:
+                        cache.delete(lock_key)
+                        lock_claimed = cache.set_if_not_exists(lock_key, "pending", ttl_seconds=300)
+                    if not lock_claimed:
                         raise HTTPException(
                             status_code=status.HTTP_409_CONFLICT,
                             detail="Archimedes is currently answering a query in this conversation. Please wait until it completes.",
@@ -105,37 +147,42 @@ def send_message(
             except JobQueueError as exc:
                 logger.error("Error checking existing job status: %s", exc)
 
+        job_id = str(uuid4())
+        chat_payload = {**chat_payload, "job_id": job_id}
         try:
-            job = queue.enqueue(
-                "chat_agent_run",
-                {
-                    "conversation_id": conversation_id,
-                    "user_id": current_user.id,
-                    "user_message_id": user_message.id,
-                    "content": content,
-                },
-            )
+            job = queue.create_job("chat_agent_run", chat_payload, job_id=job_id)
+            dispatched_to_inngest = _send_inngest_event("ai-os/chat.requested", chat_payload)
+            if not dispatched_to_inngest:
+                queue.enqueue_existing(job.id)
             if cache:
                 cache.set(lock_key, job.id, ttl_seconds=300)
             return AgentJobResponse(job_id=job.id, status=job.status.value, user_message=_message_response(user_message))
         except Exception as exc:
+            if cache and lock_claimed:
+                cache.delete(lock_key)
             logger.warning("Queue enqueue failed (%s), falling back to synchronous execution", exc)
 
-    # Fallback: run chat agent synchronously if Redis queue is disabled/failing
+    # 3. Synchronous fallback execution if queue is disabled/failing
     from app.jobs.chat_agent import run_chat_agent_job
     fallback_job_id = f"sync_{uuid4().hex[:12]}"
     try:
-        run_chat_agent_job({
-            "conversation_id": conversation_id,
-            "user_id": current_user.id,
-            "user_message_id": user_message.id,
-            "content": content,
+        result = run_chat_agent_job({
+            **chat_payload,
             "job_id": fallback_job_id,
         })
     except Exception as exc:
         logger.exception("Synchronous fallback chat agent run failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to process message: {exc}",
+        ) from exc
 
-    return AgentJobResponse(job_id=fallback_job_id, status="succeeded", user_message=_message_response(user_message))
+    return AgentJobResponse(
+        job_id=fallback_job_id,
+        status="succeeded",
+        user_message=_message_response(user_message),
+        assistant_message=_job_result_message_response(result),
+    )
 
 
 # EXPERIMENTAL/UNUSED-BY-DEFAULT: Synchronous SSE chat endpoint.
@@ -223,8 +270,35 @@ def get_message_job(
     conversation_id: str,
     job_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
+    repo: Annotated[ConversationRepository, Depends(get_conversation_repository)],
     _: Annotated[str, Depends(require_workspace_role("owner", "member", "viewer"))],
 ) -> AgentJobStatusResponse:
+    # Synchronous fallback jobs already completed — return result from DB
+    if job_id.startswith("sync_"):
+        messages = repo.list_messages(conversation_id)
+        assistant_msgs = [m for m in messages if m.role == "assistant"]
+        assistant_message = None
+        if assistant_msgs:
+            latest = assistant_msgs[-1]
+            assistant_message = MessageResponse(
+                id=latest.id,
+                role=latest.role,
+                content=latest.content,
+                tool_name=getattr(latest, "tool_name", None),
+                tool_output=getattr(latest, "tool_output", None),
+                agent_name=getattr(latest, "agent_name", None),
+                tool_arguments=getattr(latest, "tool_arguments", None),
+                thought_process=getattr(latest, "thought_process", None),
+                created_at=latest.created_at.isoformat() if hasattr(latest.created_at, "isoformat") else str(latest.created_at),
+            )
+        return AgentJobStatusResponse(
+            job_id=job_id,
+            status="succeeded",
+            assistant_message=assistant_message,
+            execution_steps=None,
+            error=None,
+        )
+
     queue = build_job_queue()
     if queue is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job queue unavailable.")
@@ -240,17 +314,7 @@ def get_message_job(
 
     assistant_message = None
     if job.result is not None:
-        assistant_message = MessageResponse(
-            id=job.result["id"],
-            role=job.result["role"],
-            content=job.result["content"],
-            tool_name=job.result.get("tool_name"),
-            tool_output=job.result.get("tool_output"),
-            agent_name=job.result.get("agent_name"),
-            tool_arguments=job.result.get("tool_arguments"),
-            thought_process=job.result.get("thought_process"),
-            created_at=job.result["created_at"],
-        )
+        assistant_message = _job_result_message_response(job.result)
     return AgentJobStatusResponse(
         job_id=job.id,
         status=job.status.value,

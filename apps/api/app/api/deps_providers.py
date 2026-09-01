@@ -46,7 +46,7 @@ def get_llm_provider(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Your stored {failing_provider.upper()} API key could not be decrypted and needs to be re-saved.",
         ) from exc
-    provider = build_provider(api_key=api_key, provider_name=provider_name)
+    provider = build_provider(api_key=api_key, provider_name=provider_name, model=current_user.preferred_model)
     cache = build_redis_cache()
     if cache is None:
         return provider

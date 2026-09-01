@@ -37,6 +37,19 @@ def test_set_update_and_delete_user_api_key(
     assert delete.status_code == 204
 
 
+def test_set_user_api_key_rejects_invalid_provider(
+    client: TestClient,
+    auth_headers: dict[str, str],
+) -> None:
+    response = client.post(
+        "/users/me/api-keys",
+        headers=auth_headers,
+        json={"provider": "not-a-provider", "api_key": "user-key"},
+    )
+
+    assert response.status_code == 422
+
+
 def test_llm_provider_prefers_user_key_over_server_key(
     db_session: Session,
     monkeypatch,
@@ -195,3 +208,50 @@ def test_embedding_provider_decryption_failure_raises_400(
     
     assert exc_info.value.status_code == 400
     assert "Your stored GEMINI API key could not be decrypted" in exc_info.value.detail
+
+
+def test_llm_provider_uses_saved_nvidia_key_and_custom_model(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    from app.providers.nvidia import NvidiaNimProvider
+    user = User(
+        id="user-nvidia-1",
+        email="nvidia@example.com",
+        name="Test",
+        emailVerified=True,
+        createdAt=datetime.now(),
+        updatedAt=datetime.now(),
+        preferred_provider="nvidia",
+        preferred_model="minimaxai/minimax-01",
+    )
+
+    encrypted_key = EncryptionService().encrypt("nvapi-test-key")
+    UserApiKeyRepository(db_session).upsert(
+        user_id=user.id,
+        provider="nvidia",
+        encrypted_key=encrypted_key,
+    )
+
+    provider = get_llm_provider(current_user=user, session=db_session)
+    if hasattr(provider, "inner"):
+        provider = getattr(provider, "inner")
+
+    assert isinstance(provider, NvidiaNimProvider)
+    assert provider.api_key == "nvapi-test-key"
+    assert provider.model == "minimaxai/minimax-01"
+
+
+def test_patch_user_preferences_updates_provider_and_model(
+    client: TestClient,
+    auth_headers: dict[str, str],
+) -> None:
+    res = client.patch(
+        "/users/me/preferences",
+        headers=auth_headers,
+        json={"preferred_provider": "nvidia", "preferred_model": "minimaxai/minimax-01"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["preferred_provider"] == "nvidia"
+    assert data["preferred_model"] == "minimaxai/minimax-01"

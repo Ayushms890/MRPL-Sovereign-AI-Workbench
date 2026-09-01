@@ -21,9 +21,9 @@ class JobQueue:
         from upstash_redis import Redis
         self.client = Redis(url=url, token=token)
 
-    def enqueue(self, job_type: str, payload: dict) -> Job:
+    def create_job(self, job_type: str, payload: dict, job_id: str | None = None) -> Job:
         job = Job(
-            id=str(uuid4()),
+            id=job_id or str(uuid4()),
             job_type=job_type,
             status=JobStatus.QUEUED,
             payload=payload,
@@ -34,9 +34,26 @@ class JobQueue:
         )
         try:
             self._save(job)
+        except Exception as exc:
+            raise JobQueueError(f"Failed to create job: {exc}") from exc
+        return job
+
+    def enqueue(self, job_type: str, payload: dict) -> Job:
+        job = self.create_job(job_type=job_type, payload=payload)
+        try:
             self.client.rpush(f"jobqueue:{job_type}", job.id)
         except Exception as exc:
             raise JobQueueError(f"Failed to enqueue job: {exc}") from exc
+        return job
+
+    def enqueue_existing(self, job_id: str) -> Job:
+        job = self.get(job_id)
+        if job is None:
+            raise JobQueueError(f"Cannot enqueue unknown job {job_id}")
+        try:
+            self.client.rpush(f"jobqueue:{job.job_type}", job.id)
+        except Exception as exc:
+            raise JobQueueError(f"Failed to enqueue job {job_id}: {exc}") from exc
         return job
 
     def dequeue(self, job_type: str) -> Job | None:
@@ -84,22 +101,22 @@ class JobQueue:
         status: str = "completed",
         metadata: dict | None = None,
     ) -> None:
-        job = self.get(job_id)
-        if job is None:
-            return
-        if job.execution_steps is None:
-            job.execution_steps = []
-        
-        step_data = {
-            "step": step,
-            "label": label,
-            "status": status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "metadata": metadata or {},
-        }
-        job.execution_steps.append(step_data)
-        job.updated_at = datetime.now(timezone.utc)
         try:
+            job = self.get(job_id)
+            if job is None:
+                return
+            if job.execution_steps is None:
+                job.execution_steps = []
+            
+            step_data = {
+                "step": step,
+                "label": label,
+                "status": status,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "metadata": metadata or {},
+            }
+            job.execution_steps.append(step_data)
+            job.updated_at = datetime.now(timezone.utc)
             self._save(job)
         except Exception as exc:
             logger.warning(f"Failed to record execution step for job {job_id}: {exc}")

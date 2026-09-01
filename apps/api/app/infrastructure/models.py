@@ -23,6 +23,7 @@ class UserModel(Base):
     emailVerified: Mapped[bool] = mapped_column("emailVerified", Boolean, nullable=False, default=True)
     image: Mapped[str | None] = mapped_column(Text, nullable=True)
     preferred_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    preferred_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     createdAt: Mapped[datetime] = mapped_column("createdAt", DateTime, nullable=False, default=utc_now)
     updatedAt: Mapped[datetime] = mapped_column("updatedAt", DateTime, nullable=False, default=utc_now)
 

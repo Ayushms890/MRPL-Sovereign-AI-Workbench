@@ -12,6 +12,7 @@ class User:
     updatedAt: datetime
     image: str | None = None
     preferred_provider: str | None = None
+    preferred_model: str | None = None
 
 
 @dataclass(slots=True)

@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
-from app.api.schemas import ApiKeyListResponse, ApiKeyMetadataResponse, ApiKeyUpsertRequest
+from app.api.schemas import (
+    ApiKeyListResponse,
+    ApiKeyMetadataResponse,
+    ApiKeyUpsertRequest,
+    UserPreferencesUpdateRequest,
+    UserResponse,
+)
 from app.auth.api_key_repository import UserApiKeyRepository
 from app.auth.encryption import EncryptionService
 from app.auth.repository import UserRepository
@@ -66,4 +72,38 @@ def list_api_keys(
     keys = UserApiKeyRepository(session).list_for_user(current_user.id)
     return ApiKeyListResponse(
         providers=[ApiKeyMetadataResponse(provider=key.provider, created_at=key.created_at) for key in keys]
+    )
+
+
+@router.patch("/me/preferences", response_model=UserResponse)
+def update_preferences(
+    payload: UserPreferencesUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[Session, Depends(get_db_session)],
+) -> UserResponse:
+    if payload.preferred_provider is not None:
+        provider = payload.preferred_provider.lower().strip()
+        if provider and provider not in PROVIDERS:
+            supported = ", ".join(sorted(PROVIDERS))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported provider {provider!r}. Use one of: {supported}.",
+            )
+    updated_user = UserRepository(session).set_preferences(
+        user_id=current_user.id,
+        provider=payload.preferred_provider,
+        model=payload.preferred_model,
+    )
+    if not updated_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return UserResponse(
+        id=updated_user.id,
+        email=updated_user.email,
+        name=updated_user.name,
+        emailVerified=updated_user.emailVerified,
+        createdAt=updated_user.createdAt,
+        updatedAt=updated_user.updatedAt,
+        image=updated_user.image,
+        preferred_provider=updated_user.preferred_provider,
+        preferred_model=updated_user.preferred_model,
     )

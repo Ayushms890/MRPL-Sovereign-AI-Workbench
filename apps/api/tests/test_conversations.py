@@ -19,8 +19,11 @@ class FakeUpstashRedisClient:
     def get(self, key: str) -> str | None:
         return self.db.get(key)
 
-    def set(self, key: str, value: str, ex: int | None = None) -> None:
+    def set(self, key: str, value: str, nx: bool | None = None, ex: int | None = None, **kwargs):
+        if nx and key in self.db:
+            return None
         self.db[key] = value
+        return True
 
     def rpush(self, key: str, value: str) -> int:
         if key not in self.queues:
@@ -459,6 +462,73 @@ def test_send_message_returns_500_on_generic_runtime_error(
     assert "An unexpected server error occurred." in str(excinfo.value)
 
 
+def test_send_message_sync_fallback_returns_assistant_message_when_queue_unavailable(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.api.routes.conversations.build_job_queue", lambda: None)
+
+    create = client.post("/conversations", headers=auth_headers, json={"title": "Sync fallback"})
+    conversation_id = create.json()["id"]
+
+    def fake_run_chat_agent_job(payload: dict) -> dict:
+        assert payload["job_id"].startswith("sync_")
+        return {
+            "id": "assistant-sync-1",
+            "role": "assistant",
+            "content": "Immediate fallback reply",
+            "tool_name": None,
+            "tool_output": None,
+            "created_at": "2026-09-01T00:00:00+00:00",
+            "agent_name": "planner",
+            "tool_arguments": None,
+            "thought_process": "sync fallback completed",
+        }
+
+    monkeypatch.setattr("app.jobs.chat_agent.run_chat_agent_job", fake_run_chat_agent_job)
+
+    send = client.post(
+        f"/conversations/{conversation_id}/messages",
+        headers=auth_headers,
+        json={"content": "Hello without Redis"},
+    )
+
+    assert send.status_code == 202
+    data = send.json()
+    assert data["status"] == "succeeded"
+    assert data["job_id"].startswith("sync_")
+    assert data["assistant_message"]["content"] == "Immediate fallback reply"
+    assert data["assistant_message"]["agent_name"] == "planner"
+    assert data["assistant_message"]["thought_process"] == "sync fallback completed"
+
+
+def test_send_message_sync_fallback_failure_returns_502_when_queue_unavailable(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.api.routes.conversations.build_job_queue", lambda: None)
+
+    create = client.post("/conversations", headers=auth_headers, json={"title": "Sync fallback fail"})
+    conversation_id = create.json()["id"]
+
+    def fake_run_chat_agent_job(payload: dict) -> dict:
+        raise ValueError("LLM provider failed: NVIDIA NIM API key is not configured.")
+
+    monkeypatch.setattr("app.jobs.chat_agent.run_chat_agent_job", fake_run_chat_agent_job)
+
+    send = client.post(
+        f"/conversations/{conversation_id}/messages",
+        headers=auth_headers,
+        json={"content": "Hello without Redis"},
+    )
+
+    assert send.status_code == 502
+    assert "Failed to process message" in send.json()["detail"]
+    assert "NVIDIA NIM API key is not configured" in send.json()["detail"]
+
+
 def test_send_message_concurrency_lock_prevents_duplicate_sends(
     client: TestClient,
     auth_headers: dict[str, str],
@@ -498,8 +568,7 @@ def test_send_message_concurrency_lock_prevents_duplicate_sends(
         )
         assert send2.status_code == 409
         assert "Archimedes is currently answering" in send2.json()["detail"]
+        assert len(fake_redis.queues["jobqueue:chat_agent_run"]) == 1
     finally:
         app.dependency_overrides.pop(get_redis_cache, None)
-
-
 

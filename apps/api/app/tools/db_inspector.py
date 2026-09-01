@@ -25,6 +25,15 @@ class DbInspectorTool:
     def __init__(self, session: Session | None = None) -> None:
         self.session = session
 
+    def _release_read_transaction(self) -> None:
+        if not self.session:
+            return
+        try:
+            if self.session.in_transaction():
+                self.session.rollback()
+        except Exception:
+            pass
+
     def execute(self, arguments: dict) -> ToolResult:
         result_text = self.run(arguments)
         return ToolResult(content=result_text)
@@ -51,6 +60,8 @@ class DbInspectorTool:
                 return "\n".join(lines)
             except Exception as exc:
                 return f"Error listing tables: {exc}"
+            finally:
+                self._release_read_transaction()
 
         elif action == "inspect_table":
             if not table_name:
@@ -90,6 +101,8 @@ class DbInspectorTool:
                 return "\n".join(lines)
             except Exception as exc:
                 return f"Error inspecting table '{table_name}': {exc}"
+            finally:
+                self._release_read_transaction()
 
         elif action == "explain_query":
             if not query:
@@ -116,5 +129,7 @@ class DbInspectorTool:
                 )
             except Exception as exc:
                 return f"Error explaining query: {exc}"
+            finally:
+                self._release_read_transaction()
 
         return f"Error: Unknown action '{action}'."

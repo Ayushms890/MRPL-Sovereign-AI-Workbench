@@ -87,12 +87,16 @@ def test_create_document_enqueues_successfully(
     assert job_data["result"] is None
 
 
-def test_create_document_without_redis_returns_503(
+def test_create_document_without_redis_uses_sync_fallback(
     client: TestClient,
     auth_headers: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("app.api.routes.documents.build_job_queue", lambda: None)
+    monkeypatch.setattr(
+        "app.jobs.document_ingestion.run_document_ingestion_job",
+        lambda payload: {"document_id": "doc-sync", "title": payload["title"], "chunk_count": 1},
+    )
 
     class MockEmbeddingProvider:
         api_key = "gemini-test-key"
@@ -103,8 +107,9 @@ def test_create_document_without_redis_returns_503(
         headers=auth_headers,
         json={"title": "Notes", "content": "alpha beta gamma"},
     )
-    assert response.status_code == 503
-    assert "ingestion requires Redis" in response.json()["detail"]
+    assert response.status_code == 202
+    assert response.json()["status"] == "succeeded"
+    assert response.json()["job_id"].startswith("sync_doc_")
 
 
 def test_get_document_job_returns_404_for_other_user(

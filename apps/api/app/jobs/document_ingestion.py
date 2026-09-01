@@ -18,7 +18,9 @@ def run_document_ingestion_job(payload: dict) -> dict:
             raise ValueError("User not found")
         api_key = resolve_gemini_api_key(session, user_id, user_model.preferred_provider)
 
-        chunks = chunk_text(payload["content"])
+        chunk_size = payload.get("chunk_size") or settings.default_chunk_size
+        overlap = payload.get("overlap") if payload.get("overlap") is not None else settings.default_chunk_overlap
+        chunks = chunk_text(payload["content"], chunk_size=chunk_size, overlap=overlap)
         if not chunks:
             raise ValueError("Document content is empty after chunking")
 

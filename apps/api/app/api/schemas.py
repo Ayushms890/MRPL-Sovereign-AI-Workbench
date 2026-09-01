@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -12,6 +13,12 @@ class UserResponse(BaseModel):
     updatedAt: datetime
     image: str | None = None
     preferred_provider: str | None = None
+    preferred_model: str | None = None
+
+
+class UserPreferencesUpdateRequest(BaseModel):
+    preferred_provider: str | None = Field(default=None, max_length=80)
+    preferred_model: str | None = Field(default=None, max_length=120)
 
 
 class RegisterRequest(BaseModel):
@@ -71,7 +78,7 @@ class AgentMessageResponse(BaseModel):
 
 
 class ApiKeyUpsertRequest(BaseModel):
-    provider: str = Field(min_length=1, max_length=80)
+    provider: Literal["gemini", "groq", "nvidia"]
     api_key: str = Field(min_length=1, max_length=4096)
 
 
@@ -87,6 +94,8 @@ class ApiKeyListResponse(BaseModel):
 class DocumentCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=200_000)
+    chunk_size: int | None = Field(default=None, ge=100, le=5000)
+    overlap: int | None = Field(default=None, ge=0, le=1000)
 
 
 class DocumentResponse(BaseModel):
@@ -113,6 +122,7 @@ class AgentJobResponse(BaseModel):
     job_id: str
     status: str
     user_message: MessageResponse
+    assistant_message: MessageResponse | None = None
 
 
 class AgentJobStatusResponse(BaseModel):
@@ -183,4 +193,3 @@ class WorkspaceInviteDetailsResponse(BaseModel):
     already_member: bool = False
     user_role: str | None = None
     is_owner: bool = False
-

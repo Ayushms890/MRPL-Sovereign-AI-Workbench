@@ -61,3 +61,11 @@ app.include_router(documents_router)
 app.include_router(users_router)
 app.include_router(share_router)
 
+# Mount Inngest endpoint for serverless / durable background job executions
+import inngest.fast_api
+from app.inngest.client import inngest_client
+from app.inngest.functions import inngest_functions
+
+inngest.fast_api.serve(app, inngest_client, inngest_functions)
+
+

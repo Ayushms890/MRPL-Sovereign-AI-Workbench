@@ -26,6 +26,14 @@ class RedisCache:
         except Exception:
             logger.exception("Redis cache set failed for key %s", key)
 
+    def set_if_not_exists(self, key: str, value: str, ttl_seconds: int) -> bool:
+        try:
+            result = self.client.set(key, value, nx=True, ex=ttl_seconds)
+        except Exception:
+            logger.exception("Redis cache set-if-not-exists failed for key %s", key)
+            return False
+        return result not in (None, False)
+
     def delete(self, key: str) -> None:
         try:
             self.client.delete(key)

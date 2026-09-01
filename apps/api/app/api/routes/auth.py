@@ -24,6 +24,7 @@ def _to_user_response(user: User) -> UserResponse:
         updatedAt=user.updatedAt,
         image=user.image,
         preferred_provider=user.preferred_provider,
+        preferred_model=user.preferred_model,
     )
 
 

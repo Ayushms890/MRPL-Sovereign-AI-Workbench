@@ -25,8 +25,8 @@ export function pollJob<T>(
     }
     try {
       const result = await fetchStatus();
-      if (result.succeeded && result.data !== undefined) {
-        options.onSucceeded(result.data);
+      if (result.succeeded) {
+        options.onSucceeded(result.data as T);
       } else if (result.failed) {
         options.onFailed(result.error ?? "Job failed");
       } else {

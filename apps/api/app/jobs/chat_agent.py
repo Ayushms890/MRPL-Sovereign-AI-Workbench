@@ -24,96 +24,119 @@ from app.tools.repository import ToolCallRepository
 logger = logging.getLogger(__name__)
 
 
+def _add_failure_message(conversation_id: str, content: str) -> None:
+    session = SessionLocal()
+    try:
+        ConversationRepository(session).add_message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=content,
+        )
+    except Exception:
+        logger.exception("Failed to persist assistant failure message")
+    finally:
+        session.close()
+
+
 def run_chat_agent_job(payload: dict) -> dict:
     """payload: {"conversation_id": str, "user_id": str, "user_message_id": str, "content": str}"""
     get_engine()
+
+    conversation_id = payload["conversation_id"]
+    user_id = payload["user_id"]
+    user_message_id = payload["user_message_id"]
+    content = payload["content"]
+    job_id = payload.get("job_id")
+
+    cache = build_redis_cache()
+    queue = build_job_queue()
+
+    # Phase 1: read all DB-backed inputs, then release the connection before any LLM call.
     session = SessionLocal()
+    user_db_url = None
     user_db_session = None
     user_engine = None
     try:
-        conversation_id = payload["conversation_id"]
-        user_id = payload["user_id"]
-        user_message_id = payload["user_message_id"]
-        content = payload["content"]
-
         user_model = session.get(UserModel, user_id)
         if user_model is None:
             raise ValueError("User not found")
         preferred_provider = user_model.preferred_provider
+        preferred_model = user_model.preferred_model
 
         inner_repo = ConversationRepository(session)
-        cache = build_redis_cache()
-        repo = CachingConversationRepository(inner=inner_repo, cache=cache) if cache else inner_repo
+        conv = inner_repo.get_by_id(conversation_id)
+        workspace_id = conv.workspace_id if conv else None
+        all_messages = [
+            m for m in inner_repo.list_messages(conversation_id)
+            if m.id != user_message_id
+        ]
 
         try:
             provider_name, api_key = resolve_active_provider(session, user_id, preferred_provider)
         except ValueError as exc:
-            try:
-                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: LLM provider failed: {exc}")
-            except Exception:
-                pass
+            _add_failure_message(conversation_id, f"Request failed: LLM provider failed: {exc}")
             raise ValueError(f"LLM provider failed: {exc}") from exc
-
-        llm_provider = build_provider(api_key=api_key, provider_name=provider_name)
-        if cache is not None:
-            llm_provider = CachingLLMProvider(inner=llm_provider, cache=cache, user_id=user_id)
 
         try:
             gemini_key = resolve_gemini_api_key(session, user_id, preferred_provider)
         except ValueError as exc:
-            try:
-                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: {exc}")
-            except Exception:
-                pass
+            _add_failure_message(conversation_id, f"Request failed: {exc}")
             raise ValueError(str(exc)) from exc
-
-        embedding_provider = GeminiEmbeddingProvider(
-            api_key=gemini_key,
-            model=settings.embedding_model,
-            dimensions=settings.embedding_dimensions,
-        )
 
         from app.auth.api_key_repository import UserApiKeyRepository
         db_key = UserApiKeyRepository(session).get_for_user_provider(user_id, "database")
         if db_key is not None:
             try:
                 from app.auth.encryption import EncryptionService
+                user_db_url = EncryptionService().decrypt(db_key.encrypted_key)
+            except Exception:
+                logger.exception("Failed to decrypt user's database URL")
+    finally:
+        session.close()
+
+    # Phase 2: build providers and perform slow model work without the Phase 1 session open.
+    llm_provider = build_provider(
+        api_key=api_key,
+        provider_name=provider_name,
+        model=preferred_model,
+    )
+    if cache is not None:
+        llm_provider = CachingLLMProvider(inner=llm_provider, cache=cache, user_id=user_id)
+
+    embedding_provider = GeminiEmbeddingProvider(
+        api_key=gemini_key,
+        model=settings.embedding_model,
+        dimensions=settings.embedding_dimensions,
+    )
+    history = build_effective_history(
+        messages=all_messages,
+        llm_provider=llm_provider,
+        cache=cache,
+        conversation_id=conversation_id,
+    )
+
+    agent_session = SessionLocal()
+    try:
+        if user_db_url:
+            try:
                 from sqlalchemy import create_engine
                 from sqlalchemy.orm import sessionmaker
-                user_db_url = EncryptionService().decrypt(db_key.encrypted_key)
-                if user_db_url:
-                    user_engine = create_engine(user_db_url)
-                    SessionLocalUser = sessionmaker(bind=user_engine)
-                    user_db_session = SessionLocalUser()
+                user_engine = create_engine(user_db_url)
+                SessionLocalUser = sessionmaker(bind=user_engine)
+                user_db_session = SessionLocalUser()
             except Exception:
                 logger.exception("Failed to connect to user's database")
 
-        conv = inner_repo.get_by_id(conversation_id)
-        ws_id = conv.workspace_id if conv else None
-
         agent = MultiAgentGraph(
             llm_provider=llm_provider,
-            tools=build_tool_registry(session, user_db_session=user_db_session),
+            tools=build_tool_registry(agent_session, user_db_session=user_db_session),
             agents=build_agent_registry(),
             embedding_provider=embedding_provider,
-            retrieval_repository=RetrievalRepository(session),
+            retrieval_repository=RetrievalRepository(agent_session),
             user_id=user_id,
-            workspace_id=ws_id,
+            workspace_id=workspace_id,
         )
 
-        all_messages = [
-            m for m in repo.list_messages(conversation_id)
-            if m.id != user_message_id
-        ]
-        history = build_effective_history(
-            messages=all_messages,
-            llm_provider=llm_provider,
-            cache=cache,
-            conversation_id=conversation_id,
-        )
-
-        job_id = payload.get("job_id")
-        queue = build_job_queue()
         if queue and job_id:
             queue.add_execution_step(job_id, "planner", "Planner analyzing prompt...", "running")
 
@@ -152,29 +175,31 @@ def run_chat_agent_job(payload: dict) -> dict:
         except LLMGenerationError as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", f"LLM provider failed: {exc}", "failed")
-            try:
-                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: LLM provider failed: {exc}")
-            except Exception:
-                pass
+            _add_failure_message(conversation_id, f"Request failed: LLM provider failed: {exc}")
             raise ValueError(f"LLM provider failed: {exc}") from exc
         except EmbeddingError as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", f"Embedding provider failed: {exc}", "failed")
-            try:
-                repo.add_message(conversation_id=conversation_id, role="assistant", content=f"Request failed: Embedding provider failed: {exc}")
-            except Exception:
-                pass
+            _add_failure_message(conversation_id, f"Request failed: Embedding provider failed: {exc}")
             raise ValueError(f"Embedding provider failed: {exc}") from exc
         except Exception as exc:
             if queue and job_id:
                 queue.add_execution_step(job_id, "error", "An unexpected server error occurred.", "failed")
             logger.exception("Unexpected error during agent execution")
-            try:
-                repo.add_message(conversation_id=conversation_id, role="assistant", content="Request failed: An unexpected server error occurred.")
-            except Exception:
-                pass
+            _add_failure_message(conversation_id, "Request failed: An unexpected server error occurred.")
             raise ValueError("An unexpected server error occurred.") from exc
+    finally:
+        agent_session.close()
+        if user_db_session is not None:
+            user_db_session.close()
+        if user_engine is not None:
+            user_engine.dispose()
 
+    # Phase 3: persist results with a fresh session/connection.
+    write_session = SessionLocal()
+    try:
+        inner_repo = ConversationRepository(write_session)
+        repo = CachingConversationRepository(inner=inner_repo, cache=cache) if cache else inner_repo
         assistant_message = repo.add_message(
             conversation_id=conversation_id,
             role="assistant",
@@ -182,7 +207,7 @@ def run_chat_agent_job(payload: dict) -> dict:
             tool_name=result.tool_name,
         )
         if result.tool_name and result.tool_arguments is not None and result.tool_output is not None:
-            ToolCallRepository(session).create(
+            ToolCallRepository(write_session).create(
                 conversation_id=conversation_id,
                 message_id=assistant_message.id,
                 tool_name=result.tool_name,
@@ -191,7 +216,7 @@ def run_chat_agent_job(payload: dict) -> dict:
                 output=result.tool_output,
             )
         if result.retrieval_query is not None:
-            RetrievalRepository(session).create(
+            RetrievalRepository(write_session).create(
                 conversation_id=conversation_id,
                 message_id=assistant_message.id,
                 agent_name=result.agent_name or "knowledge",
@@ -212,4 +237,4 @@ def run_chat_agent_job(payload: dict) -> dict:
             "thought_process": result.thought_process,
         }
     finally:
-        session.close()
+        write_session.close()

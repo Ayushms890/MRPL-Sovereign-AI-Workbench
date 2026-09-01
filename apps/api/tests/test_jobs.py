@@ -245,6 +245,91 @@ def test_run_chat_agent_job_direct_answer(db_session: Session, monkeypatch: pyte
     assert messages[1].content == "Direct graph response"
 
 
+def test_run_chat_agent_job_closes_read_session_before_agent_run(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.jobs.chat_agent import run_chat_agent_job
+    from app.infrastructure.models import UserModel
+    from app.auth.api_key_repository import UserApiKeyRepository
+    from app.auth.encryption import EncryptionService
+    from app.conversations.repository import ConversationRepository
+    from app.agents.planner import PlannerResult
+
+    user = UserModel(id="chat-user-session", name="Test", email="session@example.com", emailVerified=True, createdAt=datetime.now(), updatedAt=datetime.now())
+    db_session.add(user)
+    db_session.commit()
+
+    UserApiKeyRepository(db_session).upsert(
+        user_id="chat-user-session",
+        provider="gemini",
+        encrypted_key=EncryptionService().encrypt("fake-key")
+    )
+
+    repo = ConversationRepository(db_session)
+    conv = repo.create(user_id="chat-user-session", title="Session Lifecycle")
+    user_msg = repo.add_message(conv.id, "user", "Check session lifecycle")
+
+    class TrackingSession:
+        def __init__(self, inner: Session, index: int) -> None:
+            self.inner = inner
+            self.index = index
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+            self.inner.close()
+
+        def __getattr__(self, name: str):
+            return getattr(self.inner, name)
+
+    created_sessions: list[TrackingSession] = []
+
+    def session_factory() -> TrackingSession:
+        session = TrackingSession(db_session, len(created_sessions))
+        created_sessions.append(session)
+        return session
+
+    class SlowGraph:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def run(self, user_input, history=None):
+            assert created_sessions[0].closed is True
+            assert created_sessions[1].closed is False
+            return PlannerResult(
+                answer="Session-safe response",
+                tool_name=None,
+                agent_name="planner",
+                thought_process="phase check",
+            )
+
+    monkeypatch.setattr("app.jobs.chat_agent.SessionLocal", session_factory)
+    monkeypatch.setattr("app.jobs.chat_agent.get_engine", lambda: db_session.bind)
+    monkeypatch.setattr("app.jobs.chat_agent.build_provider", lambda **kw: object())
+    monkeypatch.setattr("app.jobs.chat_agent.GeminiEmbeddingProvider", lambda **kw: FakeEmbeddingProvider())
+    monkeypatch.setattr("app.jobs.chat_agent.MultiAgentGraph", SlowGraph)
+    monkeypatch.setattr("app.jobs.chat_agent.build_redis_cache", lambda: None)
+    monkeypatch.setattr("app.jobs.chat_agent.build_job_queue", lambda: None)
+
+    payload = {
+        "conversation_id": conv.id,
+        "user_id": "chat-user-session",
+        "user_message_id": user_msg.id,
+        "content": "Check session lifecycle",
+    }
+
+    result = run_chat_agent_job(payload)
+
+    assert result["content"] == "Session-safe response"
+    assert result["agent_name"] == "planner"
+    assert result["thought_process"] == "phase check"
+    assert [session.closed for session in created_sessions] == [True, True, True]
+    messages = repo.list_messages(conv.id)
+    assert messages[-1].role == "assistant"
+    assert messages[-1].content == "Session-safe response"
+
+
 def test_run_chat_agent_job_routes_to_knowledge(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.jobs.chat_agent import run_chat_agent_job
     from app.infrastructure.models import UserModel
