@@ -25,6 +25,15 @@ GEMINI_FALLBACK_MODELS: list[str] = [
     "gemini-3.6-flash",
 ]
 
+NVIDIA_FALLBACK_MODELS: list[str] = [
+    "meta/llama-3.1-8b-instruct",
+]
+
+FALLBACK_MODELS_BY_PROVIDER: dict[str, list[str]] = {
+    "gemini": GEMINI_FALLBACK_MODELS,
+    "nvidia": NVIDIA_FALLBACK_MODELS,
+}
+
 
 def build_provider(
     api_key: str | None = None,
@@ -48,13 +57,13 @@ def build_provider(
     effective_key = api_key if api_key is not None else settings.llm_api_key
     primary_provider = provider_class(api_key=effective_key, model=selected_model)
 
-    if disable_fallback or provider_name != "gemini":
+    fallback_models = FALLBACK_MODELS_BY_PROVIDER.get(provider_name, [])
+    if disable_fallback or not fallback_models:
         return primary_provider
 
-    # Build fallback chain for Gemini models
     fallback_providers: list[LLMProvider] = [primary_provider]
-    for fb_model in GEMINI_FALLBACK_MODELS:
+    for fb_model in fallback_models:
         if fb_model != selected_model:
-            fallback_providers.append(GeminiProvider(api_key=effective_key, model=fb_model))
+            fallback_providers.append(provider_class(api_key=effective_key, model=fb_model))
 
     return FallbackLLMProvider(fallback_providers)

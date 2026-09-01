@@ -3,12 +3,13 @@ from app.tools.web_reader import WebReaderTool
 from app.tools.chart_generator import ChartGeneratorTool
 from app.tools.github_inspector import GithubInspectorTool
 from app.tools.db_inspector import DbInspectorTool
-from app.tools.registry import build_tool_registry
+from app.tools.registry import ToolRegistry, build_tool_registry
 from app.agents.data_analyst import DataAnalystAgent
 from app.agents.security_auditor import SecurityAuditorAgent
 from app.agents.devops_agent import DevOpsAgent
 from app.agents.registry import build_agent_registry, AgentBuildContext
 from app.providers.base import LLMResponse, LLMToolCall, LLMMessage
+from app.tools.base import ToolResult
 
 
 class FakeLLMProvider:
@@ -142,3 +143,57 @@ def test_new_agents_prompt_safety():
     assert "<tool_output>" in follow_up_user_msg_sec
     assert "</tool_output>" in follow_up_user_msg_sec
     assert "Mocked GitHub Files List" in follow_up_user_msg_sec
+
+
+class FakeTool:
+    def __init__(self, name: str, content: str) -> None:
+        self.name = name
+        self.description = f"{name} test tool"
+        self.parameters = {"type": "object", "properties": {}}
+        self.content = content
+        self.calls = []
+
+    def execute(self, arguments: dict) -> ToolResult:
+        self.calls.append(arguments)
+        return ToolResult(content=self.content)
+
+
+def test_data_analyst_chains_web_search_to_chart_generator_and_extracts_chart_block():
+    web_search = FakeTool("web_search", "Latest levels: Jan=10, Feb=12.")
+    chart_generator = FakeTool(
+        "chart_generator",
+        '```json:chart\n{"chart_type":"line","title":"Water levels","data":[{"month":"Jan","level":10}],"x_key":"month","y_keys":["level"]}\n```\n\nGenerated LINE chart: **Water levels** with 1 data points.',
+    )
+    tools = ToolRegistry([web_search, chart_generator])
+    provider = ScriptedLLMProvider(
+        [
+            LLMResponse(
+                content="",
+                tool_call=LLMToolCall(name="web_search", arguments={"query": "latest water levels"}),
+            ),
+            LLMResponse(
+                content="",
+                tool_call=LLMToolCall(
+                    name="chart_generator",
+                    arguments={
+                        "chart_type": "line",
+                        "title": "Water levels",
+                        "data": [{"month": "Jan", "level": 10}],
+                        "x_key": "month",
+                        "y_keys": ["level"],
+                    },
+                ),
+            ),
+            LLMResponse(content="Here is the requested chart."),
+        ]
+    )
+
+    analyst = DataAnalystAgent(provider, tools)
+    result = analyst.run("Search latest water levels and plot a graph")
+
+    assert result.tool_name == "web_search, chart_generator"
+    assert web_search.calls == [{"query": "latest water levels"}]
+    assert chart_generator.calls[0]["title"] == "Water levels"
+    assert result.answer.startswith("```json:chart\n")
+    assert "Generated LINE chart" not in result.answer
+    assert "Here is the requested chart." in result.answer

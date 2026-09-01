@@ -20,6 +20,7 @@ class AgentBuildContext:
     embedding_provider: EmbeddingProvider | None = None
     retrieval_repository: RetrievalRepository | None = None
     user_id: str | None = None
+    workspace_id: str | None = None
 
 
 AgentFactory = Callable[[AgentBuildContext], object]
@@ -53,6 +54,7 @@ def build_agent_registry() -> AgentRegistry:
                 embedding_provider=context.embedding_provider,
                 retrieval_repository=context.retrieval_repository,
                 user_id=context.user_id,
+                workspace_id=context.workspace_id,
             ),
         }
     )

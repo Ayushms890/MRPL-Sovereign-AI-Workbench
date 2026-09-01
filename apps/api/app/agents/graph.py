@@ -10,6 +10,16 @@ from app.retrieval.repository import RetrievalRepository
 from app.tools.registry import ToolRegistry
 
 
+_DISCLAIMER_MARKERS = (
+    "don't have access to real-time",
+    "cannot perform live",
+    "cannot browse the web",
+    "don't have the ability to perform",
+    "trigger other agents",
+    "no real-time data",
+)
+
+
 class AgentGraphState(TypedDict, total=False):
     user_input: str
     history: list[LLMMessage]
@@ -123,6 +133,7 @@ class MultiAgentGraph(PlannerAgent):
             "- If user asks about code security audits, OWASP vulnerabilities, or architecture diagrams -> respond 'ROUTE: security_auditor'\n"
             "- If user asks about Dockerfiles, Kubernetes, Terraform, or CI/CD pipelines -> respond 'ROUTE: devops'\n"
             "- If user asks specifically about writing, debugging, or executing code -> respond 'ROUTE: coding'\n"
+            "- If the request asks you to SEARCH/FIND/GET live or recent data, even if it also asks for a table, graph, or report from that data -> respond 'ROUTE: research' (never answer directly about lacking real-time access; you have a research agent for exactly this).\n"
             "- If user asks about uploaded documents/notes -> respond 'ROUTE: knowledge'\n"
             "- If user asks for live web search, facts, news -> respond 'ROUTE: research'\n"
             "- If request combines code AND web search -> respond 'ROUTE: coding, research'\n"
@@ -176,6 +187,9 @@ class MultiAgentGraph(PlannerAgent):
 
         if content_lower.startswith("answer:"):
             content = content.split(":", 1)[1].strip()
+
+        if any(marker in content_lower for marker in _DISCLAIMER_MARKERS):
+            return {"route": "research", "thought_process": thought}
 
         return {
             "route": "end",
@@ -296,4 +310,5 @@ class MultiAgentGraph(PlannerAgent):
             embedding_provider=self.embedding_provider,
             retrieval_repository=self.retrieval_repository,
             user_id=self.user_id,
+            workspace_id=self.workspace_id,
         )

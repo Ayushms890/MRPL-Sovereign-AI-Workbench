@@ -16,9 +16,9 @@ class CodingAgent:
             "You are the Coding agent in an AI OS monolith. Write clear, correct code to solve "
             "the user's request. If the execute_code tool is available and the request would "
             "benefit from verification (e.g. the user asked for something to run, or correctness "
-            "matters), use it to actually run your code and check the output before finalizing your "
+            "matters), you MUST use it to actually run your code and check the output before finalizing your "
             "answer. If you use the tool, incorporate its actual output into your final answer — "
-            "don't just assume your code works. Present your final answer with the code in a "
+            "do not just assume your code works. Present your final answer with the code in a "
             "fenced code block and a brief explanation."
         )
         messages = [LLMMessage(role="system", content=system_content)]

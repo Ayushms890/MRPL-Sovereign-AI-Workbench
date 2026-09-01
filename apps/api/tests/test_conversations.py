@@ -76,7 +76,13 @@ class FakeEmbeddingProvider:
 
 
 class FakeRetrievalRepository:
-    def search(self, user_id: str, embedding: list[float], limit: int = 4) -> list[RetrievedChunk]:
+    def search(
+        self,
+        user_id: str,
+        embedding: list[float],
+        limit: int = 4,
+        workspace_id: str | None = None,
+    ) -> list[RetrievedChunk]:
         return [
             RetrievedChunk(
                 id="chunk-1",
@@ -571,4 +577,3 @@ def test_send_message_concurrency_lock_prevents_duplicate_sends(
         assert len(fake_redis.queues["jobqueue:chat_agent_run"]) == 1
     finally:
         app.dependency_overrides.pop(get_redis_cache, None)
-

@@ -53,3 +53,26 @@ def test_build_provider_returns_fallback_wrapper():
     provider = build_provider(api_key="test-key", provider_name="gemini", model="gemini-3.5-flash")
     assert isinstance(provider, FallbackLLMProvider)
     assert len(provider.providers) >= 2
+
+
+def test_build_provider_returns_nvidia_fallback_wrapper():
+    provider = build_provider(api_key="nvapi-test-key", provider_name="nvidia", model="minimaxai/minimax-m3")
+
+    assert isinstance(provider, FallbackLLMProvider)
+    assert len(provider.providers) >= 2
+    assert provider.providers[0].model == "minimaxai/minimax-m3"
+    assert provider.providers[1].model == "meta/llama-3.1-8b-instruct"
+
+
+def test_nvidia_fallback_uses_second_provider_after_primary_timeout():
+    provider = build_provider(api_key="nvapi-test-key", provider_name="nvidia", model="minimaxai/minimax-m3")
+    assert isinstance(provider, FallbackLLMProvider)
+
+    provider.providers[0].generate = MagicMock(side_effect=LLMGenerationError("NVIDIA timeout"))
+    provider.providers[1].generate = MagicMock(return_value=LLMResponse(content="Fallback NVIDIA response"))
+
+    response = provider.generate([LLMMessage(role="user", content="Hello")])
+
+    assert response.content == "Fallback NVIDIA response"
+    provider.providers[0].generate.assert_called_once()
+    provider.providers[1].generate.assert_called_once()

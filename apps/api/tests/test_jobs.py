@@ -366,7 +366,13 @@ def test_run_chat_agent_job_routes_to_knowledge(db_session: Session, monkeypatch
     class ScriptedRetrievalRepository:
         def __init__(self, session):
             pass
-        def search(self, user_id: str, embedding: list[float], limit: int = 4) -> list[RetrievedChunk]:
+        def search(
+            self,
+            user_id: str,
+            embedding: list[float],
+            limit: int = 4,
+            workspace_id: str | None = None,
+        ) -> list[RetrievedChunk]:
             return [
                 RetrievedChunk(id="test-chunk-1", document_id="doc-1", content="grounded details", score=0.99)
             ]

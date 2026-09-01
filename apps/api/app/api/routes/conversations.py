@@ -226,7 +226,7 @@ async def stream_message(
         await asyncio.sleep(0.01)
 
         try:
-            result = agent.run(user_input=content, history=history)
+            result = await asyncio.to_thread(agent.run, user_input=content, history=history)
 
             if result.thought_process:
                 yield f"event: thought\ndata: {json.dumps({'thought': result.thought_process})}\n\n"

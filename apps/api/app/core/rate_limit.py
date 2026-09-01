@@ -13,6 +13,7 @@ class RateLimiter:
         Fails open (returns True) if Redis is unavailable."""
         count = self.cache.incr(key)
         if count is None:
+            logger.warning("Rate limiter failing open because Redis increment failed for key %s", key)
             return True
         if count == 1:
             self.cache.expire(key, window_seconds)

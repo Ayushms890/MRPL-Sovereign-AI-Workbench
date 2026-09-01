@@ -214,6 +214,7 @@ def test_llm_provider_uses_saved_nvidia_key_and_custom_model(
     db_session: Session,
     monkeypatch,
 ) -> None:
+    from app.providers.fallback import FallbackLLMProvider
     from app.providers.nvidia import NvidiaNimProvider
     user = User(
         id="user-nvidia-1",
@@ -236,6 +237,8 @@ def test_llm_provider_uses_saved_nvidia_key_and_custom_model(
     provider = get_llm_provider(current_user=user, session=db_session)
     if hasattr(provider, "inner"):
         provider = getattr(provider, "inner")
+    if isinstance(provider, FallbackLLMProvider):
+        provider = provider.providers[0]
 
     assert isinstance(provider, NvidiaNimProvider)
     assert provider.api_key == "nvapi-test-key"

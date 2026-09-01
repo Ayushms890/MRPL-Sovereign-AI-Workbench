@@ -14,6 +14,7 @@ class KnowledgeAgent:
         embedding_provider: EmbeddingProvider | None,
         retrieval_repository: RetrievalRepository | None,
         user_id: str | None,
+        workspace_id: str | None = None,
     ) -> None:
         if embedding_provider is None or retrieval_repository is None or user_id is None:
             raise ValueError("KnowledgeAgent requires embedding provider, retrieval repository, and user id")
@@ -21,10 +22,16 @@ class KnowledgeAgent:
         self.embedding_provider = embedding_provider
         self.retrieval_repository = retrieval_repository
         self.user_id = user_id
+        self.workspace_id = workspace_id
 
     def run(self, user_input: str, history: list[LLMMessage] | None = None) -> PlannerResult:
         query_embedding = self.embedding_provider.embed([user_input])[0]
-        chunks = self.retrieval_repository.search(user_id=self.user_id, embedding=query_embedding, limit=4)
+        chunks = self.retrieval_repository.search(
+            user_id=self.user_id,
+            embedding=query_embedding,
+            limit=4,
+            workspace_id=self.workspace_id,
+        )
         if not chunks:
             return PlannerResult(
                 answer="I do not have any uploaded knowledge for that yet.",

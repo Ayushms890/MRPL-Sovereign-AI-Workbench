@@ -21,7 +21,11 @@ class FakeEmbeddingProvider:
 
 
 class FakeRetrievalRepository:
+    def __init__(self) -> None:
+        self.search_workspace_id = None
+
     def search(self, user_id: str, embedding: list[float], limit: int = 4, workspace_id: str | None = None) -> list[RetrievedChunk]:
+        self.search_workspace_id = workspace_id
         return [
             RetrievedChunk(
                 id="chunk-1",
@@ -59,6 +63,22 @@ def test_graph_routes_to_research_agent() -> None:
     assert len(provider.calls) == 2
 
 
+def test_graph_routes_disclaimer_shaped_planner_fallback_to_research_agent() -> None:
+    provider = ScriptedGraphProvider(
+        [
+            LLMResponse(content="I don't have access to real-time data, so I cannot browse the web for that."),
+            LLMResponse(content="Research agent handled the live-data request."),
+        ]
+    )
+    graph = MultiAgentGraph(llm_provider=provider, tools=ToolRegistry([]), agents=build_agent_registry())
+
+    result = graph.run("Search the latest water level and plot a graph")
+
+    assert result.answer == "Research agent handled the live-data request."
+    assert result.agent_name == "research"
+    assert len(provider.calls) == 2
+
+
 def test_graph_routes_to_coding_agent() -> None:
     provider = ScriptedGraphProvider(
         [
@@ -82,13 +102,15 @@ def test_graph_routes_to_knowledge_agent() -> None:
             LLMResponse(content="Grounded knowledge answer"),
         ]
     )
+    retrieval_repository = FakeRetrievalRepository()
     graph = MultiAgentGraph(
         llm_provider=provider,
         tools=ToolRegistry([]),
         agents=build_agent_registry(),
         embedding_provider=FakeEmbeddingProvider(),
-        retrieval_repository=FakeRetrievalRepository(),
+        retrieval_repository=retrieval_repository,
         user_id="user-1",
+        workspace_id="workspace-1",
     )
 
     result = graph.run("Use my uploaded knowledge")
@@ -96,6 +118,7 @@ def test_graph_routes_to_knowledge_agent() -> None:
     assert result.answer == "Grounded knowledge answer"
     assert result.agent_name == "knowledge"
     assert result.retrieval_chunk_ids == ["chunk-1"]
+    assert retrieval_repository.search_workspace_id == "workspace-1"
     assert len(provider.calls) == 2
 
     # Verify the Knowledge agent's system message wraps chunks in delimiters
