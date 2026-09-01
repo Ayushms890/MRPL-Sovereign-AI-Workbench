@@ -169,6 +169,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     setApiKeyProvider,
     apiKeyValue,
     setApiKeyValue,
+    ollamaBaseUrl,
+    setOllamaBaseUrl,
     apiKeyStatus,
     setApiKeyStatus,
     isSavingApiKey,
@@ -211,15 +213,15 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   } = useChat();
 
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
-  const [activeSwitchProvider, setActiveSwitchProvider] = useState<"gemini" | "groq" | "nvidia">(
-    ((preferredProvider as any) as "gemini" | "groq" | "nvidia") || "nvidia"
+  const [activeSwitchProvider, setActiveSwitchProvider] = useState<"gemini" | "groq" | "nvidia" | "ollama">(
+    ((preferredProvider as any) as "gemini" | "groq" | "nvidia" | "ollama") || "nvidia"
   );
   const [customModelInput, setCustomModelInput] = useState<string>(preferredModel || "");
   const [isApplyingPreferences, setIsApplyingPreferences] = useState(false);
 
   useEffect(() => {
     if (preferredProvider) {
-      setActiveSwitchProvider(preferredProvider as "gemini" | "groq" | "nvidia");
+      setActiveSwitchProvider(preferredProvider as "gemini" | "groq" | "nvidia" | "ollama");
     }
   }, [preferredProvider]);
 
@@ -741,7 +743,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 <div className="modal-tab-panel">
                   <h2>Model & API Configuration</h2>
                   <p className="tab-description">
-                    Switch between NVIDIA NIM, Google Gemini, and Groq, customize models, and manage your BYOK API keys.
+                    Switch between NVIDIA NIM, Ollama, Google Gemini, and Groq, customize models, and manage your provider settings.
                   </p>
 
                   {/* Active Provider & Custom Model Switcher */}
@@ -749,9 +751,10 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                     <h4 style={{ margin: "0 0 12px", fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
                       Active LLM Provider & Model Selection
                     </h4>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "14px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px", marginBottom: "14px" }}>
                       {[
                         { id: "nvidia", label: "NVIDIA NIM", desc: "Llama 3.3, Minimax, DeepSeek, Mistral" },
+                        { id: "ollama", label: "Ollama", desc: "Local Llama 3.1, Mistral, Qwen" },
                         { id: "gemini", label: "Google Gemini", desc: "Gemini 3.5 Flash, 2.5 Flash" },
                         { id: "groq", label: "Groq Client", desc: "Llama 3.3 70B, Instant" },
                       ].map((prov) => {
@@ -764,6 +767,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                               setActiveSwitchProvider(prov.id as any);
                               if (prov.id === "nvidia" && (!customModelInput || customModelInput.startsWith("gemini") || customModelInput.startsWith("llama-3.1"))) {
                                 setCustomModelInput("meta/llama-3.3-70b-instruct");
+                              } else if (prov.id === "ollama" && (!customModelInput || customModelInput.includes("/") || customModelInput.startsWith("gemini"))) {
+                                setCustomModelInput("llama3.1");
                               } else if (prov.id === "gemini" && (!customModelInput || customModelInput.includes("/"))) {
                                 setCustomModelInput("gemini-3.5-flash");
                               } else if (prov.id === "groq" && (!customModelInput || customModelInput.includes("/"))) {
@@ -801,6 +806,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                           placeholder={
                             activeSwitchProvider === "nvidia"
                               ? "e.g. minimaxai/minimax-01 or meta/llama-3.3-70b-instruct"
+                              : activeSwitchProvider === "ollama"
+                              ? "e.g. llama3.1"
                               : activeSwitchProvider === "groq"
                               ? "e.g. llama-3.3-70b-versatile"
                               : "e.g. gemini-3.5-flash"
@@ -843,6 +850,27 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                         {activeSwitchProvider === "gemini" && (
                           <>
                             {["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"].map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setCustomModelInput(m)}
+                                style={{
+                                  fontSize: "0.72rem",
+                                  padding: "2px 8px",
+                                  background: customModelInput === m ? "#dbeafe" : "#f1f5f9",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: "4px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {activeSwitchProvider === "ollama" && (
+                          <>
+                            {["llama3.1", "llama3.2", "mistral", "qwen2.5"].map((m) => (
                               <button
                                 key={m}
                                 type="button"
@@ -914,7 +942,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
                   <div className="settings-layout">
                     <form className="api-key-panel-modal" onSubmit={saveApiKey}>
-                      <h4 style={{ margin: "0 0 8px", fontSize: "0.9rem", fontWeight: 700, color: "#0f172a" }}>Save Provider API Key</h4>
+                      <h4 style={{ margin: "0 0 8px", fontSize: "0.9rem", fontWeight: 700, color: "#0f172a" }}>Save Provider Settings</h4>
                       <label>
                         LLM Provider
                         <select
@@ -923,30 +951,53 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                           disabled={isSavingApiKey}
                         >
                           <option value="nvidia">NVIDIA NIM</option>
+                          <option value="ollama">Ollama</option>
                           <option value="gemini">Google Gemini</option>
                           <option value="groq">Groq Client</option>
                         </select>
                       </label>
-                      <label>
-                        Secret Key
-                        <input
-                          type="password"
-                          value={apiKeyValue}
-                          onChange={(event) => setApiKeyValue(event.target.value)}
-                          placeholder={
-                            apiKeyProvider === "nvidia"
-                              ? "Paste NVIDIA NIM API key (nvapi-...)"
-                              : apiKeyProvider === "groq"
-                              ? "Paste Groq API key (gsk_...)"
-                              : "Paste Google Gemini API key (AIza...)"
-                          }
-                          autoComplete="off"
-                          disabled={isSavingApiKey}
-                        />
-                      </label>
+                      {apiKeyProvider === "ollama" ? (
+                        <>
+                          <label>
+                            Base URL
+                            <input
+                              type="url"
+                              value={ollamaBaseUrl}
+                              onChange={(event) => setOllamaBaseUrl(event.target.value)}
+                              placeholder="http://localhost:11434"
+                              autoComplete="off"
+                              disabled={isSavingApiKey}
+                            />
+                          </label>
+                          <p className="status" style={{ marginTop: "-4px" }}>
+                            Ollama runs on your own machine. This only works if the backend can reach this address; deployed backends cannot reach your localhost.
+                          </p>
+                        </>
+                      ) : (
+                        <label>
+                          Secret Key
+                          <input
+                            type="password"
+                            value={apiKeyValue}
+                            onChange={(event) => setApiKeyValue(event.target.value)}
+                            placeholder={
+                              apiKeyProvider === "nvidia"
+                                ? "Paste NVIDIA NIM API key (nvapi-...)"
+                                : apiKeyProvider === "groq"
+                                ? "Paste Groq API key (gsk_...)"
+                                : "Paste Google Gemini API key (AIza...)"
+                            }
+                            autoComplete="off"
+                            disabled={isSavingApiKey}
+                          />
+                        </label>
+                      )}
                       <div className="actions-row-modal">
-                        <button type="submit" disabled={isSavingApiKey || !apiKeyValue.trim()}>
-                          {isSavingApiKey ? "Saving..." : "Save Key"}
+                        <button
+                          type="submit"
+                          disabled={isSavingApiKey || (apiKeyProvider === "ollama" ? !ollamaBaseUrl.trim() : !apiKeyValue.trim())}
+                        >
+                          {isSavingApiKey ? "Saving..." : apiKeyProvider === "ollama" ? "Save URL" : "Save Key"}
                         </button>
                       </div>
                       {apiKeyStatus !== "Configure your API keys" && (
@@ -992,6 +1043,27 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                               type="button"
                               className="ghost btn-delete-key"
                               onClick={() => deleteApiKey("gemini")}
+                              disabled={isSavingApiKey}
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Ollama */}
+                        <div className="checklist-item">
+                          <div className="provider-status-info">
+                            <span className={`status-dot ${configuredProviders.includes("ollama") ? "active" : ""}`}></span>
+                            <div>
+                              <h5>Ollama</h5>
+                              <span>{configuredProviders.includes("ollama") ? "Configured" : "Not Found"}</span>
+                            </div>
+                          </div>
+                          {configuredProviders.includes("ollama") && (
+                            <button
+                              type="button"
+                              className="ghost btn-delete-key"
+                              onClick={() => deleteApiKey("ollama")}
                               disabled={isSavingApiKey}
                             >
                               Revoke

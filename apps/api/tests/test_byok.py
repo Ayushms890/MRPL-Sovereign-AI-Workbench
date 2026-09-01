@@ -8,6 +8,7 @@ from app.auth.encryption import EncryptionService
 from app.api.deps_providers import get_llm_provider, get_embedding_provider
 from app.core.config import settings
 from app.domain.entities import User
+from app.auth.provider_resolution import resolve_active_provider_config
 from app.providers.groq import GroqProvider
 
 
@@ -243,6 +244,45 @@ def test_llm_provider_uses_saved_nvidia_key_and_custom_model(
     assert isinstance(provider, NvidiaNimProvider)
     assert provider.api_key == "nvapi-test-key"
     assert provider.model == "minimaxai/minimax-01"
+
+
+def test_ollama_config_can_be_saved_without_api_key(
+    client: TestClient,
+    create_auth_headers,
+    db_session: Session,
+) -> None:
+    from app.auth.repository import UserRepository
+    from app.providers.ollama import OllamaProvider
+
+    headers = create_auth_headers("ollama@example.com")
+    response = client.post(
+        "/users/me/api-keys",
+        headers=headers,
+        json={"provider": "ollama", "base_url": "http://localhost:11434"},
+    )
+    assert response.status_code == 200
+    assert response.json()["provider"] == "ollama"
+    assert "api_key" not in response.json()
+
+    list_response = client.get("/users/me/api-keys", headers=headers)
+    assert list_response.status_code == 200
+    assert {p["provider"] for p in list_response.json()["providers"]} == {"ollama"}
+
+    user = UserRepository(db_session).get_by_email("ollama@example.com")
+    assert user is not None
+    assert user.preferred_provider == "ollama"
+
+    provider_config = resolve_active_provider_config(db_session, user.id, user.preferred_provider)
+    assert provider_config.provider_name == "ollama"
+    assert provider_config.api_key == ""
+    assert provider_config.base_url == "http://localhost:11434"
+
+    provider = get_llm_provider(current_user=user, session=db_session)
+    if hasattr(provider, "inner"):
+        provider = getattr(provider, "inner")
+    assert isinstance(provider, OllamaProvider)
+    assert provider.model == "llama3.1"
+    assert provider.base_url == "http://localhost:11434"
 
 
 def test_patch_user_preferences_updates_provider_and_model(

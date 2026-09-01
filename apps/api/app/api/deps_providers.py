@@ -9,7 +9,7 @@ from app.agents.registry import AgentRegistry, build_agent_registry
 from app.api.dependencies import get_current_user
 from app.auth.api_key_repository import UserApiKeyRepository
 from app.auth.encryption import EncryptionService
-from app.auth.provider_resolution import resolve_active_provider, resolve_gemini_api_key
+from app.auth.provider_resolution import resolve_active_provider_config, resolve_gemini_api_key
 from app.cache.redis_client import RedisCache, build_redis_cache
 
 
@@ -34,7 +34,7 @@ def get_llm_provider(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> LLMProvider:
     try:
-        provider_name, api_key = resolve_active_provider(session, current_user.id, current_user.preferred_provider)
+        provider_config = resolve_active_provider_config(session, current_user.id, current_user.preferred_provider)
     except ValueError as exc:
         user_keys = UserApiKeyRepository(session).list_for_user(current_user.id)
         failing_provider = "API"
@@ -46,7 +46,12 @@ def get_llm_provider(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Your stored {failing_provider.upper()} API key could not be decrypted and needs to be re-saved.",
         ) from exc
-    provider = build_provider(api_key=api_key, provider_name=provider_name, model=current_user.preferred_model)
+    provider = build_provider(
+        api_key=provider_config.api_key,
+        provider_name=provider_config.provider_name,
+        model=current_user.preferred_model,
+        base_url=provider_config.base_url,
+    )
     cache = build_redis_cache()
     if cache is None:
         return provider

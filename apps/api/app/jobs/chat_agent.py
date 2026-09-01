@@ -3,7 +3,7 @@ import logging
 
 from app.agents.graph import MultiAgentGraph
 from app.agents.registry import build_agent_registry
-from app.auth.provider_resolution import resolve_active_provider, resolve_gemini_api_key
+from app.auth.provider_resolution import resolve_active_provider_config, resolve_gemini_api_key
 from app.cache.redis_client import build_redis_cache
 from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
@@ -72,7 +72,7 @@ def run_chat_agent_job(payload: dict) -> dict:
         ]
 
         try:
-            provider_name, api_key = resolve_active_provider(session, user_id, preferred_provider)
+            provider_config = resolve_active_provider_config(session, user_id, preferred_provider)
         except ValueError as exc:
             _add_failure_message(conversation_id, f"Request failed: LLM provider failed: {exc}")
             raise ValueError(f"LLM provider failed: {exc}") from exc
@@ -96,9 +96,10 @@ def run_chat_agent_job(payload: dict) -> dict:
 
     # Phase 2: build providers and perform slow model work without the Phase 1 session open.
     llm_provider = build_provider(
-        api_key=api_key,
-        provider_name=provider_name,
+        api_key=provider_config.api_key,
+        provider_name=provider_config.provider_name,
         model=preferred_model,
+        base_url=provider_config.base_url,
     )
     if cache is not None:
         llm_provider = CachingLLMProvider(inner=llm_provider, cache=cache, user_id=user_id)

@@ -45,6 +45,7 @@ JWT_SECRET_KEY=replace-with-a-long-random-value
 LLM_PROVIDER=gemini
 LLM_MODEL=gemini-3.5-flash
 LLM_API_KEY=your-gemini-api-key
+OLLAMA_BASE_URL=http://localhost:11434
 LLM_MAX_OUTPUT_TOKENS=2048
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
@@ -84,6 +85,16 @@ LLM_PROVIDER=groq
 LLM_MODEL=llama-3.1-8b-instant
 LLM_API_KEY=your-groq-api-key
 ```
+
+To switch to local Ollama:
+
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.1
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+Ollama must be reachable from the backend process. `localhost` works only when the API backend and Ollama are running on the same machine.
 
 Create `apps/web/.env.local`:
 

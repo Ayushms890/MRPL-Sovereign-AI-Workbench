@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class UserResponse(BaseModel):
@@ -78,8 +78,19 @@ class AgentMessageResponse(BaseModel):
 
 
 class ApiKeyUpsertRequest(BaseModel):
-    provider: Literal["gemini", "groq", "nvidia"]
-    api_key: str = Field(min_length=1, max_length=4096)
+    provider: Literal["gemini", "groq", "nvidia", "ollama"]
+    api_key: str | None = Field(default=None, min_length=1, max_length=4096)
+    base_url: str | None = Field(default=None, min_length=1, max_length=2048)
+
+    @model_validator(mode="after")
+    def validate_provider_config(self) -> "ApiKeyUpsertRequest":
+        if self.provider == "ollama":
+            if not self.base_url or not self.base_url.strip():
+                raise ValueError("base_url is required for Ollama.")
+            return self
+        if not self.api_key or not self.api_key.strip():
+            raise ValueError("api_key is required for this provider.")
+        return self
 
 
 class ApiKeyMetadataResponse(BaseModel):

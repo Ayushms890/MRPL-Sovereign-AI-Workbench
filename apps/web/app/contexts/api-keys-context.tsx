@@ -5,13 +5,15 @@ import { FormEvent } from "react";
 import { createApiClient } from "../lib/api-client";
 import { useAuth } from "./auth-context";
 
-export type SupportedProvider = "gemini" | "groq" | "nvidia";
+export type SupportedProvider = "gemini" | "groq" | "nvidia" | "ollama";
 
 type ApiKeysContextType = {
   apiKeyProvider: SupportedProvider;
   setApiKeyProvider: (provider: SupportedProvider) => void;
   apiKeyValue: string;
   setApiKeyValue: (val: string) => void;
+  ollamaBaseUrl: string;
+  setOllamaBaseUrl: (val: string) => void;
   apiKeyStatus: string;
   setApiKeyStatus: (status: string) => void;
   isSavingApiKey: boolean;
@@ -35,6 +37,7 @@ export const ApiKeysProvider = ({ children }: { children: React.ReactNode }) => 
 
   const [apiKeyProvider, setApiKeyProvider] = useState<SupportedProvider>("nvidia");
   const [apiKeyValue, setApiKeyValue] = useState("");
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState("http://localhost:11434");
   const [apiKeyStatus, setApiKeyStatus] = useState("Configure your API keys");
   const [isSavingApiKey, setIsSavingApiKey] = useState(false);
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([]);
@@ -43,6 +46,7 @@ export const ApiKeysProvider = ({ children }: { children: React.ReactNode }) => 
 
   const activeModelLabel = (() => {
     if (preferredProvider === "nvidia") return `NVIDIA NIM (${preferredModel || "meta/llama-3.3-70b-instruct"})`;
+    if (preferredProvider === "ollama") return `Ollama (${preferredModel || "llama3.1"})`;
     if (preferredProvider === "groq") return `Groq Client (${preferredModel || "llama-3.3-70b"})`;
     if (preferredProvider === "gemini") return `Google Gemini (${preferredModel || "gemini-3.5-flash"})`;
     return `Default Model (${preferredModel || "gemini-3.5-flash"})`;
@@ -131,20 +135,32 @@ export const ApiKeysProvider = ({ children }: { children: React.ReactNode }) => 
 
   async function saveApiKey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!apiKeyValue.trim()) {
+    if (apiKeyProvider === "ollama" && !ollamaBaseUrl.trim()) {
+      setApiKeyStatus("Enter an Ollama base URL before saving");
+      return;
+    }
+    if (apiKeyProvider !== "ollama" && !apiKeyValue.trim()) {
       setApiKeyStatus("Enter a key before saving");
       return;
     }
     const api = createApiClient(getToken);
     setIsSavingApiKey(true);
-    setApiKeyStatus("Saving key...");
+    setApiKeyStatus(apiKeyProvider === "ollama" ? "Saving Ollama URL..." : "Saving key...");
     try {
+      const body =
+        apiKeyProvider === "ollama"
+          ? { provider: apiKeyProvider, base_url: ollamaBaseUrl.trim() }
+          : { provider: apiKeyProvider, api_key: apiKeyValue.trim() };
       const response = await api<{ provider: string; created_at: string }>("/users/me/api-keys", {
         method: "POST",
-        body: JSON.stringify({ provider: apiKeyProvider, api_key: apiKeyValue.trim() }),
+        body: JSON.stringify(body),
       });
       setApiKeyValue("");
-      setApiKeyStatus(`${response.provider.toUpperCase()} API key saved successfully`);
+      setApiKeyStatus(
+        response.provider === "ollama"
+          ? "Ollama base URL saved successfully"
+          : `${response.provider.toUpperCase()} API key saved successfully`
+      );
 
       const nextProviders = [...new Set([...configuredProviders, apiKeyProvider])];
       setConfiguredProviders(nextProviders);
@@ -186,6 +202,8 @@ export const ApiKeysProvider = ({ children }: { children: React.ReactNode }) => 
         setApiKeyProvider,
         apiKeyValue,
         setApiKeyValue,
+        ollamaBaseUrl,
+        setOllamaBaseUrl,
         apiKeyStatus,
         setApiKeyStatus,
         isSavingApiKey,

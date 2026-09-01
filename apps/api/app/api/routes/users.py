@@ -14,6 +14,7 @@ from app.api.schemas import (
 from app.auth.api_key_repository import UserApiKeyRepository
 from app.auth.encryption import EncryptionService
 from app.auth.repository import UserRepository
+from app.core.config import settings
 from app.db import get_db_session
 from app.domain.entities import User
 from app.providers.registry import PROVIDERS
@@ -33,8 +34,14 @@ def set_api_key(
         supported = ", ".join(sorted(PROVIDERS))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported provider. Use one of: {supported}.")
 
+    config_value = (
+        (payload.base_url or settings.ollama_base_url).strip().rstrip("/")
+        if provider == "ollama"
+        else (payload.api_key or "").strip()
+    )
+
     try:
-        encrypted_key = EncryptionService().encrypt(payload.api_key)
+        encrypted_key = EncryptionService().encrypt(config_value)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
