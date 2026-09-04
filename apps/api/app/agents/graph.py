@@ -79,6 +79,7 @@ class MultiAgentGraph(PlannerAgent):
         graph.add_node("security_auditor", self._security_auditor_node)
         graph.add_node("devops", self._devops_node)
         graph.add_node("multi", self._multi_node)
+        graph.add_node("industrial", self._industrial_node)
         graph.set_entry_point("planner")
         graph.add_conditional_edges(
             "planner",
@@ -91,6 +92,7 @@ class MultiAgentGraph(PlannerAgent):
                 "security_auditor": "security_auditor",
                 "devops": "devops",
                 "multi": "multi",
+                "industrial": "industrial",
                 "end": END,
             },
         )
@@ -101,6 +103,7 @@ class MultiAgentGraph(PlannerAgent):
         graph.add_edge("security_auditor", END)
         graph.add_edge("devops", END)
         graph.add_edge("multi", END)
+        graph.add_edge("industrial", END)
         return graph.compile()
 
     def _planner_node(self, state: AgentGraphState) -> AgentGraphState:
@@ -129,6 +132,8 @@ class MultiAgentGraph(PlannerAgent):
 
         system_content = (
             "You are the Planner agent in Archimedes AI OS monolith. Decide which specialist agent should fulfill the request:\n"
+            "- If user asks to analyze a refinery/plant shift report, equipment condition report, or any uploaded "
+            "industrial/process report for abnormal parameters, deviations, or recommended actions -> respond 'ROUTE: industrial'\n"
             "- If user asks about data analysis, SQL queries, CSV datasets, or charts/graphs -> respond 'ROUTE: data_analyst'\n"
             "- If user asks about code security audits, OWASP vulnerabilities, or architecture diagrams -> respond 'ROUTE: security_auditor'\n"
             "- If user asks about Dockerfiles, Kubernetes, Terraform, or CI/CD pipelines -> respond 'ROUTE: devops'\n"
@@ -169,6 +174,8 @@ class MultiAgentGraph(PlannerAgent):
 
             if "coding" in route_part and "research" in route_part:
                 route = "multi"
+            elif "industrial" in route_part:
+                route = "industrial"
             elif "data_analyst" in route_part:
                 route = "data_analyst"
             elif "security_auditor" in route_part:
@@ -202,9 +209,9 @@ class MultiAgentGraph(PlannerAgent):
         }
 
     @staticmethod
-    def _route_from_planner(state: AgentGraphState) -> Literal["research", "knowledge", "coding", "data_analyst", "security_auditor", "devops", "multi", "end"]:
+    def _route_from_planner(state: AgentGraphState) -> Literal["research", "knowledge", "coding", "data_analyst", "security_auditor", "devops", "multi", "industrial", "end"]:
         route = state.get("route")
-        if route in ("multi", "coding", "research", "knowledge", "data_analyst", "security_auditor", "devops"):
+        if route in ("multi", "coding", "research", "knowledge", "data_analyst", "security_auditor", "devops", "industrial"):
             return route
         return "end"
 
@@ -234,6 +241,53 @@ class MultiAgentGraph(PlannerAgent):
             "answer": "\n\n---\n\n".join(answer_parts),
             "tool_name": ", ".join(tools_used) if tools_used else None,
             "agent_name": "planner + coding + research",
+            "thought_process": state.get("thought_process"),
+        }
+
+    def _industrial_node(self, state: AgentGraphState) -> AgentGraphState:
+        """Industrial workflow: retrieve the relevant report/guidance via the
+        Knowledge agent, then hand that context to the Data Analyst agent so
+        it can extract parameters and run the deterministic anomaly-check
+        tool, rather than eyeballing deviations itself."""
+        user_input = state["user_input"]
+
+        knowledge_state = {
+            **state,
+            "user_input": (
+                f"Retrieve the full relevant shift/equipment report content and any related operating "
+                f"guidance or maintenance SOP for this request: {user_input}"
+            ),
+        }
+        knowledge_res = self._knowledge_node(knowledge_state)
+
+        analysis_prompt = (
+            "You are analyzing a refinery/plant industrial report. Here is the retrieved report and "
+            "guidance content:\n\n"
+            f"{knowledge_res.get('answer', '')}\n\n"
+            "Extract every numeric process/equipment parameter mentioned, compare each against its stated "
+            "operating range or specification using the industrial_anomaly_check tool, then explain the "
+            "results and recommend next actions (grounded in any retrieved guidance/SOP steps, never invent "
+            "process changes). Original request: "
+            f"{user_input}"
+        )
+        data_analyst_state = {**state, "user_input": analysis_prompt}
+        analyst_res = self._data_analyst_node(data_analyst_state)
+
+        answer_parts = []
+        if knowledge_res.get("answer"):
+            answer_parts.append(f"### Retrieved Report & Guidance\n{knowledge_res['answer']}")
+        if analyst_res.get("answer"):
+            answer_parts.append(f"### Anomaly Analysis\n{analyst_res['answer']}")
+
+        return {
+            "answer": "\n\n---\n\n".join(answer_parts),
+            "tool_name": analyst_res.get("tool_name"),
+            "tool_arguments": analyst_res.get("tool_arguments"),
+            "tool_output": analyst_res.get("tool_output"),
+            "agent_name": "planner + knowledge + data_analyst",
+            "retrieval_query": knowledge_res.get("retrieval_query"),
+            "retrieval_chunk_ids": knowledge_res.get("retrieval_chunk_ids"),
+            "retrieval_scores": knowledge_res.get("retrieval_scores"),
             "thought_process": state.get("thought_process"),
         }
 

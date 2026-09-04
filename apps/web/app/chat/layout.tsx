@@ -27,6 +27,7 @@ import { useAuth } from "../contexts/auth-context";
 import { VoiceInput } from "../components/voice-input";
 import { ExportShareModal } from "../components/export-share-modal";
 import { WorkspaceMembersModal } from "../components/workspace-members-modal";
+import { DocumentUploadModal } from "../components/document-upload-modal";
 
 const COMMANDS = [
   {
@@ -213,6 +214,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   } = useChat();
 
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [activeSwitchProvider, setActiveSwitchProvider] = useState<"gemini" | "groq" | "nvidia" | "ollama">(
     ((preferredProvider as any) as "gemini" | "groq" | "nvidia" | "ollama") || "nvidia"
   );
@@ -666,7 +668,12 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 onKeyDown={handleKeyDown}
               />
               <div className="composer-toolbar-right">
-                <button type="button" className="composer-icon-btn" title="Add attachment">
+                <button
+                  type="button"
+                  className="composer-icon-btn"
+                  title="Upload a document to the knowledge base"
+                  onClick={() => setIsUploadModalOpen(true)}
+                >
                   <Paperclip size={16} />
                 </button>
                 <button type="button" className="composer-icon-btn" title="Add emoji">
@@ -1255,6 +1262,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         <WorkspaceMembersModal
           isOpen={isWorkspaceModalOpen}
           onClose={() => setIsWorkspaceModalOpen(false)}
+        />
+      )}
+
+      {isUploadModalOpen && (
+        <DocumentUploadModal
+          isOpen={isUploadModalOpen}
+          onClose={() => setIsUploadModalOpen(false)}
         />
       )}
     </main>

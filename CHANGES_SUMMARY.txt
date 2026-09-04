@@ -1,0 +1,196 @@
+ apps/api/app/agents/data_analyst.py |  1 +
+ apps/api/app/agents/graph.py        | 58 +++++++++++++++++++++++++++++++++++--
+ apps/api/app/tools/registry.py      |  2 ++
+ apps/web/app/chat/layout.tsx        | 16 +++++++++-
+ 4 files changed, 74 insertions(+), 3 deletions(-)
+diff --git a/apps/api/app/agents/data_analyst.py b/apps/api/app/agents/data_analyst.py
+index c84626b..dc25f22 100644
+--- a/apps/api/app/agents/data_analyst.py
++++ b/apps/api/app/agents/data_analyst.py
+@@ -10,6 +10,7 @@ DATA_ANALYST_SYSTEM_PROMPT = """You are the Data Analyst Agent in Archimedes AI
+ Your responsibility is to analyze data queries, process CSV/JSON datasets, write clean SQL queries, and generate data visualizations.
+ If the user asks to visualize data or plot statistics, invoke the `chart_generator` tool.
+ If the user asks about database schemas or index optimizations, invoke the `db_inspector` tool.
++If the request involves refinery/plant process parameters, equipment condition readings, or any shift/inspection report with numeric values that must be checked against a range or specification, extract each parameter as {parameter, actual, unit, and either min/max or target/target_operator} and invoke the `industrial_anomaly_check` tool. Do not estimate deviation percentages or NORMAL/HIGH/LOW/CRITICAL status yourself — always get them from that tool's result.
+ If the request needs current, recent, or live real-world data that is not already present in the conversation, call the `web_search` tool first, then use those results to build the requested table, graph, or report.
+ Never claim that you lack real-time access; use `web_search` for live/recent data.
+ 
+diff --git a/apps/api/app/agents/graph.py b/apps/api/app/agents/graph.py
+index 219c047..7e02643 100644
+--- a/apps/api/app/agents/graph.py
++++ b/apps/api/app/agents/graph.py
+@@ -79,6 +79,7 @@ class MultiAgentGraph(PlannerAgent):
+         graph.add_node("security_auditor", self._security_auditor_node)
+         graph.add_node("devops", self._devops_node)
+         graph.add_node("multi", self._multi_node)
++        graph.add_node("industrial", self._industrial_node)
+         graph.set_entry_point("planner")
+         graph.add_conditional_edges(
+             "planner",
+@@ -91,6 +92,7 @@ class MultiAgentGraph(PlannerAgent):
+                 "security_auditor": "security_auditor",
+                 "devops": "devops",
+                 "multi": "multi",
++                "industrial": "industrial",
+                 "end": END,
+             },
+         )
+@@ -101,6 +103,7 @@ class MultiAgentGraph(PlannerAgent):
+         graph.add_edge("security_auditor", END)
+         graph.add_edge("devops", END)
+         graph.add_edge("multi", END)
++        graph.add_edge("industrial", END)
+         return graph.compile()
+ 
+     def _planner_node(self, state: AgentGraphState) -> AgentGraphState:
+@@ -129,6 +132,8 @@ class MultiAgentGraph(PlannerAgent):
+ 
+         system_content = (
+             "You are the Planner agent in Archimedes AI OS monolith. Decide which specialist agent should fulfill the request:\n"
++            "- If user asks to analyze a refinery/plant shift report, equipment condition report, or any uploaded "
++            "industrial/process report for abnormal parameters, deviations, or recommended actions -> respond 'ROUTE: industrial'\n"
+             "- If user asks about data analysis, SQL queries, CSV datasets, or charts/graphs -> respond 'ROUTE: data_analyst'\n"
+             "- If user asks about code security audits, OWASP vulnerabilities, or architecture diagrams -> respond 'ROUTE: security_auditor'\n"
+             "- If user asks about Dockerfiles, Kubernetes, Terraform, or CI/CD pipelines -> respond 'ROUTE: devops'\n"
+@@ -169,6 +174,8 @@ class MultiAgentGraph(PlannerAgent):
+ 
+             if "coding" in route_part and "research" in route_part:
+                 route = "multi"
++            elif "industrial" in route_part:
++                route = "industrial"
+             elif "data_analyst" in route_part:
+                 route = "data_analyst"
+             elif "security_auditor" in route_part:
+@@ -202,9 +209,9 @@ class MultiAgentGraph(PlannerAgent):
+         }
+ 
+     @staticmethod
+-    def _route_from_planner(state: AgentGraphState) -> Literal["research", "knowledge", "coding", "data_analyst", "security_auditor", "devops", "multi", "end"]:
++    def _route_from_planner(state: AgentGraphState) -> Literal["research", "knowledge", "coding", "data_analyst", "security_auditor", "devops", "multi", "industrial", "end"]:
+         route = state.get("route")
+-        if route in ("multi", "coding", "research", "knowledge", "data_analyst", "security_auditor", "devops"):
++        if route in ("multi", "coding", "research", "knowledge", "data_analyst", "security_auditor", "devops", "industrial"):
+             return route
+         return "end"
+ 
+@@ -237,6 +244,53 @@ class MultiAgentGraph(PlannerAgent):
+             "thought_process": state.get("thought_process"),
+         }
+ 
++    def _industrial_node(self, state: AgentGraphState) -> AgentGraphState:
++        """Industrial workflow: retrieve the relevant report/guidance via the
++        Knowledge agent, then hand that context to the Data Analyst agent so
++        it can extract parameters and run the deterministic anomaly-check
++        tool, rather than eyeballing deviations itself."""
++        user_input = state["user_input"]
++
++        knowledge_state = {
++            **state,
++            "user_input": (
++                f"Retrieve the full relevant shift/equipment report content and any related operating "
++                f"guidance or maintenance SOP for this request: {user_input}"
++            ),
++        }
++        knowledge_res = self._knowledge_node(knowledge_state)
++
++        analysis_prompt = (
++            "You are analyzing a refinery/plant industrial report. Here is the retrieved report and "
++            "guidance content:\n\n"
++            f"{knowledge_res.get('answer', '')}\n\n"
++            "Extract every numeric process/equipment parameter mentioned, compare each against its stated "
++            "operating range or specification using the industrial_anomaly_check tool, then explain the "
++            "results and recommend next actions (grounded in any retrieved guidance/SOP steps, never invent "
++            "process changes). Original request: "
++            f"{user_input}"
++        )
++        data_analyst_state = {**state, "user_input": analysis_prompt}
++        analyst_res = self._data_analyst_node(data_analyst_state)
++
++        answer_parts = []
++        if knowledge_res.get("answer"):
++            answer_parts.append(f"### Retrieved Report & Guidance\n{knowledge_res['answer']}")
++        if analyst_res.get("answer"):
++            answer_parts.append(f"### Anomaly Analysis\n{analyst_res['answer']}")
++
++        return {
++            "answer": "\n\n---\n\n".join(answer_parts),
++            "tool_name": analyst_res.get("tool_name"),
++            "tool_arguments": analyst_res.get("tool_arguments"),
++            "tool_output": analyst_res.get("tool_output"),
++            "agent_name": "planner + knowledge + data_analyst",
++            "retrieval_query": knowledge_res.get("retrieval_query"),
++            "retrieval_chunk_ids": knowledge_res.get("retrieval_chunk_ids"),
++            "retrieval_scores": knowledge_res.get("retrieval_scores"),
++            "thought_process": state.get("thought_process"),
++        }
++
+     def _research_node(self, state: AgentGraphState) -> AgentGraphState:
+         research_agent = self.agents.build("research", self._agent_context())
+         result = research_agent.run(state["user_input"], history=state.get("history", []))
+diff --git a/apps/api/app/tools/registry.py b/apps/api/app/tools/registry.py
+index d7fc5b5..0adc1dd 100644
+--- a/apps/api/app/tools/registry.py
++++ b/apps/api/app/tools/registry.py
+@@ -6,6 +6,7 @@ from app.tools.code_execution import CodeExecutionTool
+ from app.tools.current_time import CurrentTimeTool
+ from app.tools.db_inspector import DbInspectorTool
+ from app.tools.github_inspector import GithubInspectorTool
++from app.tools.industrial_anomaly_check import IndustrialAnomalyCheckTool
+ from app.tools.tavily_search import TavilySearchTool
+ from app.tools.web_reader import WebReaderTool
+ 
+@@ -64,5 +65,6 @@ def build_tool_registry(
+             ChartGeneratorTool(),
+             GithubInspectorTool(),
+             DbInspectorTool(session=db_session),
++            IndustrialAnomalyCheckTool(),
+         ]
+     )
+diff --git a/apps/web/app/chat/layout.tsx b/apps/web/app/chat/layout.tsx
+index c59c3c6..133559c 100644
+--- a/apps/web/app/chat/layout.tsx
++++ b/apps/web/app/chat/layout.tsx
+@@ -27,6 +27,7 @@ import { useAuth } from "../contexts/auth-context";
+ import { VoiceInput } from "../components/voice-input";
+ import { ExportShareModal } from "../components/export-share-modal";
+ import { WorkspaceMembersModal } from "../components/workspace-members-modal";
++import { DocumentUploadModal } from "../components/document-upload-modal";
+ 
+ const COMMANDS = [
+   {
+@@ -213,6 +214,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode })
+   } = useChat();
+ 
+   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState(false);
++  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+   const [activeSwitchProvider, setActiveSwitchProvider] = useState<"gemini" | "groq" | "nvidia" | "ollama">(
+     ((preferredProvider as any) as "gemini" | "groq" | "nvidia" | "ollama") || "nvidia"
+   );
+@@ -666,7 +668,12 @@ export default function ChatLayout({ children }: { children: React.ReactNode })
+                 onKeyDown={handleKeyDown}
+               />
+               <div className="composer-toolbar-right">
+-                <button type="button" className="composer-icon-btn" title="Add attachment">
++                <button
++                  type="button"
++                  className="composer-icon-btn"
++                  title="Upload a document to the knowledge base"
++                  onClick={() => setIsUploadModalOpen(true)}
++                >
+                   <Paperclip size={16} />
+                 </button>
+                 <button type="button" className="composer-icon-btn" title="Add emoji">
+@@ -1257,6 +1264,13 @@ export default function ChatLayout({ children }: { children: React.ReactNode })
+           onClose={() => setIsWorkspaceModalOpen(false)}
+         />
+       )}
++
++      {isUploadModalOpen && (
++        <DocumentUploadModal
++          isOpen={isUploadModalOpen}
++          onClose={() => setIsUploadModalOpen(false)}
++        />
++      )}
+     </main>
+   );
+ }

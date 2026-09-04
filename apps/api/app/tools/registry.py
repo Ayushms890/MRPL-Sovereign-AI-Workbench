@@ -6,6 +6,7 @@ from app.tools.code_execution import CodeExecutionTool
 from app.tools.current_time import CurrentTimeTool
 from app.tools.db_inspector import DbInspectorTool
 from app.tools.github_inspector import GithubInspectorTool
+from app.tools.industrial_anomaly_check import IndustrialAnomalyCheckTool
 from app.tools.tavily_search import TavilySearchTool
 from app.tools.web_reader import WebReaderTool
 
@@ -64,5 +65,6 @@ def build_tool_registry(
             ChartGeneratorTool(),
             GithubInspectorTool(),
             DbInspectorTool(session=db_session),
+            IndustrialAnomalyCheckTool(),
         ]
     )
