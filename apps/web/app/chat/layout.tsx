@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useEffect, useState } from "react";
+import React, { useMemo, useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useChat } from "../chat-context";
 import {
@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Search,
   Paperclip,
+  ImagePlus,
   Smile,
   SendHorizontal,
   Share2,
@@ -28,6 +29,8 @@ import { VoiceInput } from "../components/voice-input";
 import { ExportShareModal } from "../components/export-share-modal";
 import { WorkspaceMembersModal } from "../components/workspace-members-modal";
 import { DocumentUploadModal } from "../components/document-upload-modal";
+import type { ImageAttachment } from "../contexts/conversation-context";
+import toast from "react-hot-toast";
 
 const COMMANDS = [
   {
@@ -63,6 +66,8 @@ const COMMANDS = [
 ];
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
+  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -92,6 +97,35 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     } else {
       setShowSuggestions(false);
     }
+  };
+
+  const handleImageSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    const available = 2 - imageAttachments.length;
+    if (files.length > available) {
+      toast.error("You can attach at most two images per message.");
+    }
+    const accepted = files.slice(0, Math.max(available, 0)).filter((file) => {
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+        toast.error(`${file.name}: use JPEG, PNG, or WebP.`);
+        return false;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error(`${file.name}: images must be 5 MB or smaller.`);
+        return false;
+      }
+      return true;
+    });
+    const attachments = await Promise.all(accepted.map(async (file) => ({
+      mime_type: file.type as ImageAttachment["mime_type"],
+      data: await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+        reader.readAsDataURL(file);
+      }),
+    })));
+    setImageAttachments((current) => [...current, ...attachments].slice(0, 2));
+    event.target.value = "";
   };
 
   const selectSuggestion = (index: number) => {
@@ -605,10 +639,29 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
             className="composer-container"
             onSubmit={(e) => {
               setShowSuggestions(false);
-              void sendMessage(e);
+              void sendMessage(e, undefined, undefined, imageAttachments);
+              setImageAttachments([]);
             }}
           >
             <div className="composer-box" style={{ position: "relative" }}>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                hidden
+                onChange={(event) => void handleImageSelection(event)}
+              />
+              {imageAttachments.length > 0 && (
+                <div style={{ display: "flex", gap: 8, padding: "8px 12px 0" }}>
+                  {imageAttachments.map((image, index) => (
+                    <div key={`${image.mime_type}-${index}`} style={{ position: "relative" }}>
+                      <img src={`data:${image.mime_type};base64,${image.data}`} alt={`Attachment ${index + 1}`} style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 6 }} />
+                      <button type="button" onClick={() => setImageAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))} aria-label="Remove image" style={{ position: "absolute", top: -6, right: -6, border: 0, borderRadius: "50%", cursor: "pointer" }}><X size={12} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
               {showSuggestions && suggestions.length > 0 && (
                 <div
                   style={{
@@ -668,6 +721,9 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 onKeyDown={handleKeyDown}
               />
               <div className="composer-toolbar-right">
+                <button type="button" className="composer-icon-btn" title="Attach up to two images" onClick={() => imageInputRef.current?.click()} disabled={isSending || imageAttachments.length >= 2}>
+                  <ImagePlus size={16} />
+                </button>
                 <button
                   type="button"
                   className="composer-icon-btn"
@@ -683,7 +739,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
                 <button
                   type="submit"
                   className="composer-send-btn"
-                  disabled={isSending || !draft.trim()}
+                  disabled={isSending || (!draft.trim() && imageAttachments.length === 0)}
                   title="Send message"
                   style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
                 >

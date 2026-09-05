@@ -124,6 +124,7 @@ def send_message(
         "user_id": current_user.id,
         "user_message_id": user_message.id,
         "content": content,
+        "images": [image.model_dump() for image in payload.images],
     }
 
     queue = build_job_queue()

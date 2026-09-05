@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     access_token_expiry_minutes: int = 60
     llm_provider: str = "gemini"
     llm_model: str = "gemini-3.5-flash"
+    gemini_vision_model: str = "gemini-2.5-flash"
     llm_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     ollama_base_url: str = "http://localhost:11434"

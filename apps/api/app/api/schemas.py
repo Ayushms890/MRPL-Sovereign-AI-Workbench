@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+import base64
+
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class UserResponse(BaseModel):
@@ -53,8 +55,31 @@ class ConversationResponse(BaseModel):
     updated_at: datetime
 
 
+class ImageAttachmentRequest(BaseModel):
+    mime_type: Literal["image/jpeg", "image/png", "image/webp"]
+    data: str = Field(min_length=1, max_length=7_000_000)
+
+    @field_validator("data")
+    @classmethod
+    def validate_image_data(cls, value: str) -> str:
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except ValueError as exc:
+            raise ValueError("image data must be valid base64") from exc
+        if len(decoded) > 5 * 1024 * 1024:
+            raise ValueError("each image must be 5 MB or smaller")
+        return value
+
+
 class MessageCreateRequest(BaseModel):
-    content: str = Field(min_length=1, max_length=8000)
+    content: str = Field(default="", max_length=8000)
+    images: list[ImageAttachmentRequest] = Field(default_factory=list, max_length=2)
+
+    @model_validator(mode="after")
+    def validate_message_has_content(self) -> "MessageCreateRequest":
+        if not self.content.strip() and not self.images:
+            raise ValueError("content or at least one image is required")
+        return self
 
 
 class MessageResponse(BaseModel):

@@ -3,7 +3,7 @@ import logging
 
 from app.agents.graph import MultiAgentGraph
 from app.agents.registry import build_agent_registry
-from app.auth.provider_resolution import resolve_active_provider_config, resolve_embedding_provider_config
+from app.auth.provider_resolution import resolve_active_provider_config, resolve_embedding_provider_config, resolve_gemini_api_key
 from app.cache.redis_client import build_redis_cache
 from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
@@ -11,12 +11,14 @@ from app.core.config import settings
 from app.db import SessionLocal, get_engine
 from app.jobs.queue import build_job_queue
 from app.infrastructure.models import UserModel
-from app.providers.base import LLMGenerationError, LLMMessage
+from app.providers.base import LLMGenerationError, LLMImage, LLMMessage
 from app.providers.caching import CachingLLMProvider
 from app.providers.embeddings.errors import EmbeddingError
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
 from app.providers.embeddings.ollama import OllamaEmbeddingProvider
 from app.providers.registry import build_provider
+from app.providers.gemini import GeminiProvider
+from app.agents.planner import PlannerResult
 from app.conversations.summarization import build_effective_history
 from app.retrieval.repository import RetrievalRepository
 from app.tools.registry import build_tool_registry
@@ -47,6 +49,7 @@ def run_chat_agent_job(payload: dict) -> dict:
     user_id = payload["user_id"]
     user_message_id = payload["user_message_id"]
     content = payload["content"]
+    images = payload.get("images") or []
     job_id = payload.get("job_id")
 
     cache = build_redis_cache()
@@ -84,6 +87,13 @@ def run_chat_agent_job(payload: dict) -> dict:
             _add_failure_message(conversation_id, f"Request failed: {exc}")
             raise ValueError(str(exc)) from exc
 
+        if images:
+            try:
+                gemini_api_key = resolve_gemini_api_key(session, user_id, preferred_provider)
+            except ValueError as exc:
+                _add_failure_message(conversation_id, "Request failed: Image requests require a Gemini API key in BYOK settings.")
+                raise ValueError("Image requests require a Gemini API key in BYOK settings.") from exc
+
         from app.auth.api_key_repository import UserApiKeyRepository
         db_key = UserApiKeyRepository(session).get_for_user_provider(user_id, "database")
         if db_key is not None:
@@ -96,13 +106,12 @@ def run_chat_agent_job(payload: dict) -> dict:
         session.close()
 
     # Phase 2: build providers and perform slow model work without the Phase 1 session open.
-    llm_provider = build_provider(
-        api_key=provider_config.api_key,
-        provider_name=provider_config.provider_name,
-        model=preferred_model,
-        base_url=provider_config.base_url,
+    llm_provider = (
+        GeminiProvider(api_key=gemini_api_key, model=settings.gemini_vision_model)
+        if images
+        else build_provider(api_key=provider_config.api_key, provider_name=provider_config.provider_name, model=preferred_model, base_url=provider_config.base_url)
     )
-    if cache is not None:
+    if cache is not None and not images:
         llm_provider = CachingLLMProvider(inner=llm_provider, cache=cache, user_id=user_id)
 
     if embedding_config.provider_name == "ollama":
@@ -150,7 +159,18 @@ def run_chat_agent_job(payload: dict) -> dict:
             queue.add_execution_step(job_id, "planner", "Planner analyzing prompt...", "running")
 
         try:
-            result = agent.run(user_input=content, history=history)
+            if images:
+                response = llm_provider.generate([
+                    *history[-12:],
+                    LLMMessage(
+                        role="user",
+                        content=content or "Please analyze these images.",
+                        images=[LLMImage(mime_type=image["mime_type"], data=image["data"]) for image in images],
+                    ),
+                ])
+                result = PlannerResult(answer=response.content, agent_name="gemini")
+            else:
+                result = agent.run(user_input=content, history=history)
             if queue and job_id:
                 if result.thought_process:
                     queue.add_execution_step(

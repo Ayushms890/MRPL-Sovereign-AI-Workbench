@@ -49,6 +49,8 @@ export type Message = {
   execution_steps?: ExecutionStep[];
 };
 
+export type ImageAttachment = { mime_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
+
 export type SuggestionCard = {
   title: string;
   desc: string;
@@ -105,7 +107,8 @@ type ConversationContextType = {
   sendMessage: (
     event?: FormEvent<HTMLFormElement>,
     textOverride?: string,
-    conversationIdOverride?: string
+    conversationIdOverride?: string,
+    images?: ImageAttachment[]
   ) => Promise<void>;
 };
 
@@ -346,7 +349,8 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
   const sendMessage = async (
     event?: FormEvent<HTMLFormElement>,
     textOverride?: string,
-    conversationIdOverride?: string
+    conversationIdOverride?: string,
+    images: ImageAttachment[] = []
   ) => {
     if (event) event.preventDefault();
 
@@ -356,7 +360,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
     }
 
     const content = textOverride ?? draft;
-    if (!content.trim()) return;
+    if (!content.trim() && images.length === 0) return;
 
     if (sendingRef.current) return;
     sendingRef.current = true;
@@ -415,7 +419,7 @@ export const ConversationProvider = ({ children }: { children: React.ReactNode }
         `/conversations/${targetId}/messages`,
         {
           method: "POST",
-          body: JSON.stringify({ content: content.trim() }),
+          body: JSON.stringify({ content: content.trim(), images }),
         }
       );
 

@@ -44,6 +44,7 @@ DATABASE_URL=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
 JWT_SECRET_KEY=replace-with-a-long-random-value
 LLM_PROVIDER=gemini
 LLM_MODEL=gemini-3.5-flash
+GEMINI_VISION_MODEL=gemini-2.5-flash
 LLM_API_KEY=your-gemini-api-key
 OLLAMA_BASE_URL=http://localhost:11434
 LLM_MAX_OUTPUT_TOKENS=2048
@@ -95,6 +96,8 @@ LLM_PROVIDER=ollama
 LLM_MODEL=llama3.1
 OLLAMA_BASE_URL=http://localhost:11434
 ```
+
+Chat supports up to two JPEG, PNG, or WebP images per message (5 MB each). Image requests always use Gemini and `GEMINI_VISION_MODEL`, even when another chat provider/model is selected; save a Gemini API key in BYOK settings before sending images.
 
 Ollama must be reachable from the backend process. `localhost` works only when the API backend and Ollama are running on the same machine.
 
