@@ -52,6 +52,8 @@ UPSTASH_REDIS_REST_TOKEN=
 LLM_CACHE_TTL_SECONDS=3600
 CONVERSATION_CACHE_TTL_SECONDS=300
 EMBEDDING_MODEL=gemini-embedding-001
+EMBEDDING_PROVIDER=gemini
+OLLAMA_EMBEDDING_MODEL=qwen3-embedding
 EMBEDDING_DIMENSIONS=768
 ENCRYPTION_KEYS=your-primary-fernet-key
 FRONTEND_ORIGIN=http://localhost:3000
@@ -95,6 +97,21 @@ OLLAMA_BASE_URL=http://localhost:11434
 ```
 
 Ollama must be reachable from the backend process. `localhost` works only when the API backend and Ollama are running on the same machine.
+
+To use Ollama for embeddings while keeping any supported chat model (including `llama3.1`), pull the dedicated embedding model and configure it independently:
+
+```powershell
+ollama pull qwen3-embedding
+```
+
+```env
+EMBEDDING_PROVIDER=ollama
+OLLAMA_EMBEDDING_MODEL=qwen3-embedding
+# Must match the vector length produced by the exact pulled model.
+EMBEDDING_DIMENSIONS=4096
+```
+
+Gemini remains the default embedding provider. The default `qwen3-embedding` tag is the 8B variant and produces 4096-dimensional vectors; use the matching dimension for any different Qwen tag. Changing embedding dimensions from the existing 768-dimensional Gemini schema requires a matching pgvector schema migration and re-indexing existing documents; do not mix vectors from models with different dimensions in the same index.
 
 Create `apps/web/.env.local`:
 
@@ -194,7 +211,7 @@ python -m app.worker
 
 Open `http://localhost:3000`, register a user, create a conversation, and send a planner request. The graph can answer directly or route to Research. Tool calls are recorded in `tool_calls`, including the agent that invoked the tool.
 
-For lightweight RAG, paste text into the Knowledge panel. The backend stores `documents` and `document_chunks`, using the Neon Postgres `vector` extension with Gemini embeddings. Ask a knowledge-flavored question in chat and the Planner can route it to the Knowledge agent. Retrieval audits are stored in `retrievals` with retrieved chunk IDs and scores.
+For lightweight RAG, paste text into the Knowledge panel. The backend stores `documents` and `document_chunks`, using the Neon Postgres `vector` extension with the configured Gemini or Ollama embedding provider. Ask a knowledge-flavored question in chat and the Planner can route it to the Knowledge agent. Retrieval audits are stored in `retrievals` with retrieved chunk IDs and scores.
 
 BYOK endpoints:
 

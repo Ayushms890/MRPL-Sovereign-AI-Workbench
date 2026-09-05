@@ -13,6 +13,15 @@ class ResolvedProviderConfig:
     base_url: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedEmbeddingProviderConfig:
+    """The provider configuration used for document and query embeddings."""
+
+    provider_name: str
+    api_key: str = ""
+    base_url: str | None = None
+
+
 def _config_from_stored_value(provider: str, stored_value: str) -> ResolvedProviderConfig:
     if provider == "ollama":
         return ResolvedProviderConfig(
@@ -72,3 +81,33 @@ def resolve_gemini_api_key(session: Session, user_id: str, preferred_provider: s
     if provider_name != "gemini":
         raise ValueError("Embeddings require a Gemini key; save one in BYOK settings.")
     return api_key
+
+
+def resolve_embedding_provider_config(
+    session: Session,
+    user_id: str,
+    preferred_provider: str | None,
+) -> ResolvedEmbeddingProviderConfig:
+    """Resolve the explicitly configured embedding provider for a user.
+
+    Embeddings intentionally have their own provider setting: an Ollama chat
+    model such as ``llama3.1`` can therefore be paired with a dedicated
+    embedding model such as ``qwen3-embedding``.
+    """
+    provider_name = settings.embedding_provider.lower().strip()
+    if provider_name == "gemini":
+        return ResolvedEmbeddingProviderConfig(
+            provider_name="gemini",
+            api_key=resolve_gemini_api_key(session, user_id, preferred_provider),
+        )
+    if provider_name == "ollama":
+        ollama_config = UserApiKeyRepository(session).get_for_user_provider(user_id, "ollama")
+        if ollama_config is not None:
+            stored_base_url = EncryptionService().decrypt(ollama_config.encrypted_key)
+            base_url = (stored_base_url or settings.ollama_base_url).rstrip("/")
+        else:
+            base_url = settings.ollama_base_url.rstrip("/")
+        return ResolvedEmbeddingProviderConfig(provider_name="ollama", base_url=base_url)
+    raise ValueError(
+        f"Unsupported EMBEDDING_PROVIDER {settings.embedding_provider!r}. Use 'gemini' or 'ollama'."
+    )

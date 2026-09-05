@@ -3,7 +3,7 @@ import logging
 
 from app.agents.graph import MultiAgentGraph
 from app.agents.registry import build_agent_registry
-from app.auth.provider_resolution import resolve_active_provider_config, resolve_gemini_api_key
+from app.auth.provider_resolution import resolve_active_provider_config, resolve_embedding_provider_config
 from app.cache.redis_client import build_redis_cache
 from app.conversations.caching import CachingConversationRepository
 from app.conversations.repository import ConversationRepository
@@ -15,6 +15,7 @@ from app.providers.base import LLMGenerationError, LLMMessage
 from app.providers.caching import CachingLLMProvider
 from app.providers.embeddings.errors import EmbeddingError
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
+from app.providers.embeddings.ollama import OllamaEmbeddingProvider
 from app.providers.registry import build_provider
 from app.conversations.summarization import build_effective_history
 from app.retrieval.repository import RetrievalRepository
@@ -78,7 +79,7 @@ def run_chat_agent_job(payload: dict) -> dict:
             raise ValueError(f"LLM provider failed: {exc}") from exc
 
         try:
-            gemini_key = resolve_gemini_api_key(session, user_id, preferred_provider)
+            embedding_config = resolve_embedding_provider_config(session, user_id, preferred_provider)
         except ValueError as exc:
             _add_failure_message(conversation_id, f"Request failed: {exc}")
             raise ValueError(str(exc)) from exc
@@ -104,11 +105,18 @@ def run_chat_agent_job(payload: dict) -> dict:
     if cache is not None:
         llm_provider = CachingLLMProvider(inner=llm_provider, cache=cache, user_id=user_id)
 
-    embedding_provider = GeminiEmbeddingProvider(
-        api_key=gemini_key,
-        model=settings.embedding_model,
-        dimensions=settings.embedding_dimensions,
-    )
+    if embedding_config.provider_name == "ollama":
+        embedding_provider = OllamaEmbeddingProvider(
+            model=settings.ollama_embedding_model,
+            dimensions=settings.embedding_dimensions,
+            base_url=embedding_config.base_url or settings.ollama_base_url,
+        )
+    else:
+        embedding_provider = GeminiEmbeddingProvider(
+            api_key=embedding_config.api_key,
+            model=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+        )
     history = build_effective_history(
         messages=all_messages,
         llm_provider=llm_provider,

@@ -1,8 +1,9 @@
-from app.auth.provider_resolution import resolve_gemini_api_key
+from app.auth.provider_resolution import resolve_embedding_provider_config
 from app.core.config import settings
 from app.db import SessionLocal, get_engine
 from app.infrastructure.models import UserModel
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
+from app.providers.embeddings.ollama import OllamaEmbeddingProvider
 from app.retrieval.chunking import chunk_text
 from app.retrieval.repository import DocumentRepository
 
@@ -16,7 +17,7 @@ def run_document_ingestion_job(payload: dict) -> dict:
         user_model = session.get(UserModel, user_id)
         if not user_model:
             raise ValueError("User not found")
-        api_key = resolve_gemini_api_key(session, user_id, user_model.preferred_provider)
+        provider_config = resolve_embedding_provider_config(session, user_id, user_model.preferred_provider)
 
         chunk_size = payload.get("chunk_size") or settings.default_chunk_size
         overlap = payload.get("overlap") if payload.get("overlap") is not None else settings.default_chunk_overlap
@@ -24,11 +25,18 @@ def run_document_ingestion_job(payload: dict) -> dict:
         if not chunks:
             raise ValueError("Document content is empty after chunking")
 
-        embedding_provider = GeminiEmbeddingProvider(
-            api_key=api_key,
-            model=settings.embedding_model,
-            dimensions=settings.embedding_dimensions,
-        )
+        if provider_config.provider_name == "ollama":
+            embedding_provider = OllamaEmbeddingProvider(
+                model=settings.ollama_embedding_model,
+                dimensions=settings.embedding_dimensions,
+                base_url=provider_config.base_url or settings.ollama_base_url,
+            )
+        else:
+            embedding_provider = GeminiEmbeddingProvider(
+                api_key=provider_config.api_key,
+                model=settings.embedding_model,
+                dimensions=settings.embedding_dimensions,
+            )
         embeddings = embedding_provider.embed(chunks)
 
         document = DocumentRepository(session).create_with_chunks(

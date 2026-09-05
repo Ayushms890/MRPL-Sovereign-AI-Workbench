@@ -44,13 +44,6 @@ def create_document(
     resolved_ws_id: Annotated[str, Depends(require_workspace_role("owner", "member"))],
     workspace_id: str | None = None,
 ) -> DocumentJobResponse:
-    api_key = getattr(embedding_provider, "api_key", None)
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Embeddings require a Gemini key; save one in BYOK settings.",
-        )
-
     doc_payload = {
         "user_id": current_user.id,
         "workspace_id": resolved_ws_id,

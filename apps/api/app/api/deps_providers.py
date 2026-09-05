@@ -9,7 +9,7 @@ from app.agents.registry import AgentRegistry, build_agent_registry
 from app.api.dependencies import get_current_user
 from app.auth.api_key_repository import UserApiKeyRepository
 from app.auth.encryption import EncryptionService
-from app.auth.provider_resolution import resolve_active_provider_config, resolve_gemini_api_key
+from app.auth.provider_resolution import resolve_active_provider_config, resolve_embedding_provider_config
 from app.cache.redis_client import RedisCache, build_redis_cache
 
 
@@ -24,6 +24,7 @@ from app.providers.base import LLMProvider
 from app.providers.caching import CachingLLMProvider
 from app.providers.embeddings.base import EmbeddingProvider
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
+from app.providers.embeddings.ollama import OllamaEmbeddingProvider
 from app.providers.registry import build_provider
 from app.retrieval.repository import RetrievalRepository
 from app.tools.registry import ToolRegistry, build_tool_registry
@@ -63,22 +64,30 @@ def get_embedding_provider(
     session: Annotated[Session, Depends(get_db_session)],
 ) -> EmbeddingProvider:
     try:
-        api_key = resolve_gemini_api_key(session, current_user.id, current_user.preferred_provider)
+        provider_config = resolve_embedding_provider_config(session, current_user.id, current_user.preferred_provider)
     except ValueError as exc:
         if "could not be decrypted" in str(exc):
+            provider_label = settings.embedding_provider.upper()
+            detail = (
+                "Your stored GEMINI API key could not be decrypted and needs to be re-saved."
+                if provider_label == "GEMINI"
+                else f"Your stored {provider_label} embedding configuration could not be decrypted and needs to be re-saved."
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Your stored GEMINI API key could not be decrypted and needs to be re-saved.",
+                detail=detail,
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return GeminiEmbeddingProvider(
-        api_key=api_key,
-        model=settings.embedding_model,
-        dimensions=settings.embedding_dimensions,
-    )
+    if provider_config.provider_name == "ollama":
+        return OllamaEmbeddingProvider(
+            model=settings.ollama_embedding_model,
+            dimensions=settings.embedding_dimensions,
+            base_url=provider_config.base_url or settings.ollama_base_url,
+        )
+    return GeminiEmbeddingProvider(api_key=provider_config.api_key, model=settings.embedding_model, dimensions=settings.embedding_dimensions)
 
 
 def get_retrieval_repository(session: Annotated[Session, Depends(get_db_session)]) -> RetrievalRepository:

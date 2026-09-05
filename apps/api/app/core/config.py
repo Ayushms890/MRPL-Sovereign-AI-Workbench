@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     llm_cache_ttl_seconds: int = 3600
     conversation_cache_ttl_seconds: int = 300
     embedding_model: str = "gemini-embedding-001"
+    embedding_provider: str = "gemini"
+    ollama_embedding_model: str = "qwen3-embedding"
     embedding_dimensions: int = 768
     default_chunk_size: int = 1200
     default_chunk_overlap: int = 200

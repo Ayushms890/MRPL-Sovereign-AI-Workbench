@@ -10,6 +10,7 @@ from app.domain.entities import User
 from app.infrastructure.models import DocumentChunkModel, DocumentModel
 from app.main import app
 from app.providers.embeddings.gemini import GeminiEmbeddingProvider
+from app.providers.embeddings.ollama import OllamaEmbeddingProvider
 from app.providers.embeddings.errors import EmbeddingError
 from app.retrieval.chunking import chunk_text
 
@@ -157,6 +158,31 @@ def test_embedding_provider_requires_gemini_key_when_active_provider_is_groq(
         raise AssertionError("Expected get_embedding_provider to reject Groq-only embedding setup")
 
 
+def test_embedding_provider_uses_ollama_without_a_gemini_key(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    user = User(
+        id="user-ollama-embeddings",
+        email="ollama-embeddings@example.com",
+        name="Test",
+        emailVerified=True,
+        createdAt=datetime.now(),
+        updatedAt=datetime.now(),
+    )
+    monkeypatch.setattr(settings, "embedding_provider", "ollama")
+    monkeypatch.setattr(settings, "ollama_embedding_model", "qwen3-embedding")
+    monkeypatch.setattr(settings, "ollama_base_url", "http://ollama.internal:11434/")
+
+    provider = get_embedding_provider(current_user=user, session=db_session)
+
+    assert isinstance(provider, OllamaEmbeddingProvider)
+    assert provider.model == "qwen3-embedding"
+    assert provider.base_url == "http://ollama.internal:11434"
+
+
 def test_gemini_embedding_provider_uses_embed_content_config(monkeypatch) -> None:
     captured_payload = {}
 
@@ -202,6 +228,45 @@ def test_gemini_embedding_provider_sanitizes_http_errors(monkeypatch) -> None:
     assert "HTTP 503 Service Unavailable" in message
     assert "secret-key" not in message
     assert "?key=" not in message
+
+
+def test_ollama_embedding_provider_batches_qwen_embeddings(monkeypatch) -> None:
+    captured_payload = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"embeddings": [[0.1] * 4, [0.2] * 4]}
+
+    def fake_post(url: str, json: dict, timeout: int):
+        captured_payload.update(url=url, json=json, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr("app.providers.embeddings.ollama.httpx.post", fake_post)
+
+    vectors = OllamaEmbeddingProvider(
+        model="qwen3-embedding", dimensions=4, base_url="http://localhost:11434/"
+    ).embed(["first", "second"])
+
+    assert vectors == [[0.1] * 4, [0.2] * 4]
+    assert captured_payload["url"] == "http://localhost:11434/api/embed"
+    assert captured_payload["json"] == {"model": "qwen3-embedding", "input": ["first", "second"]}
+
+
+def test_ollama_embedding_provider_rejects_unexpected_dimensions(monkeypatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"embeddings": [[0.1] * 3]}
+
+    monkeypatch.setattr("app.providers.embeddings.ollama.httpx.post", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(EmbeddingError, match="returned 3 embedding dimensions, expected 4"):
+        OllamaEmbeddingProvider("qwen3-embedding", dimensions=4, base_url="http://localhost:11434").embed(["text"])
 
 
 def test_list_documents(
